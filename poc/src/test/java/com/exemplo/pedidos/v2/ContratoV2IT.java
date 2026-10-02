@@ -73,6 +73,28 @@ class ContratoV2IT {
     }
 
     @Test
+    @DisplayName("ADR-007: 401 sem token, em Problem Details")
+    void unauthorized() {
+        ApiClient.Response response = api.post("/v2/orders", null, newKey(), Requests.v2(newCustomerId()));
+
+        assertThat(response.status()).isEqualTo(401);
+        assertValid("POST", "/orders", response);
+    }
+
+    @Test
+    @DisplayName("ADR-007: 422 idempotency-key-reuse em Problem Details (409 request-in-progress: IdempotenciaIT)")
+    void idempotencyKeyReuse() {
+        String key = newKey();
+        String customerId = newCustomerId();
+        api.post("/v2/orders", TOKEN_ANA, key, Requests.v2(customerId));
+
+        ApiClient.Response response = api.post("/v2/orders", TOKEN_ANA, key, Requests.v2WithSku(customerId, "SKU-0002"));
+
+        assertThat(response.status()).isEqualTo(422);
+        assertValid("POST", "/orders", response);
+    }
+
+    @Test
     @DisplayName("ADR-007: 404 para pedido inexistente e identificador malformado")
     void notFound() {
         String missing = "/orders/0192f7a4-3c2e-7b10-9f4d-2a6b8c1e5d70";

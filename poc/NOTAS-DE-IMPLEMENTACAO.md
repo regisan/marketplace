@@ -45,6 +45,8 @@ Os contratos em `docs/` não foram alterados. Cada item traz a resolução adota
 | D-26 | `ConsumidorV1` lê as respostas em modo estrito (falha com campo desconhecido) | Além de validar contra o schema, detecta qualquer campo novo na resposta da v1, o que um consumidor estrito da 1.0.0 não toleraria |
 | D-27 | A v1 não impõe limites que a 1.0.0 não tinha (máximo de itens e de quantidade); só limita `customerId` e `sku` a 64 caracteres, o tamanho das colunas | Uma regra nova recusaria requisições que consumidores atuais já enviam |
 | D-28 | `GET /orders/{id}` com identificador não numérico responde `404` | A 1.0.0 declara apenas `200`, `401` e `404` |
+| D-29 | `401` da v2 em Problem Details e da v1 em `{message}`; o formato é escolhido pelo prefixo da rota no filtro | O filtro roda antes do roteamento para o controller |
+| D-30 | `GET` de pedido de outro chamador devolve o mesmo corpo de um pedido inexistente | API-01: não revelar a existência do pedido |
 
 ## Problemas encontrados
 

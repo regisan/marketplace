@@ -5,3 +5,12 @@ spring:
     url: jdbc:postgresql://localhost:5432/pedidos
     username: pedidos
     password: pedidos
+
+# Tokens sintéticos: substituem JWT e IdP, que ficam fora da PoC. Nunca usar fora do perfil local.
+pedidos:
+  auth:
+    tokens:
+      token-cliente-ana: { callerId: cliente-ana, type: CUSTOMER, channel: WEB, country: BR }
+      token-cliente-bruno: { callerId: cliente-bruno, type: CUSTOMER, channel: APP, country: BR }
+      token-parceiro-acme: { callerId: parceiro-acme, type: PARTNER, partnerId: acme, channel: PARTNER, country: BR }
+      token-erp: { callerId: erp, type: INTERNAL, channel: WEB, country: BR }
