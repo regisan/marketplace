@@ -38,9 +38,10 @@ Adotar a **alternativa B**, complementada pela **alternativa C** para parceiros.
 - Escopo da chave: par (identidade do chamador extraída do token, chave). Chaves iguais de chamadores diferentes não colidem.
 - Validade: 24 horas. Depois disso, a chave pode ser reutilizada e cria novo pedido.
 
-**Algoritmo** (uma única transação de banco)
-1. Calcular `requestHash` (SHA-256 do corpo normalizado).
-2. Inserir em `idempotency_record (caller_id, idem_key, request_hash, order_id, response_status, response_body, expires_at)`, com chave única `(caller_id, idem_key)`, junto com o pedido, os itens com snapshot e o evento no outbox.
+**Algoritmo**
+0. Antes de precificar, ler o registro válido da chave, se existir, e responder diretamente (repetição ou `422`). Sem essa leitura, uma repetição feita depois de uma mudança de preço receberia `409 price-changed` em vez da resposta original. A leitura é apenas um atalho; a garantia sob concorrência continua sendo a restrição única do passo 2.
+1. Calcular `requestHash`: SHA-256 da **operação lógica** (o `operationId` do contrato, de modo que `/orders` e `/v1/orders` sejam a mesma operação) e do corpo **desserializado no DTO de entrada**, serializado com chaves ordenadas e sem espaços. Campos desconhecidos, que a API ignora, não alteram o hash.
+2. Em uma única transação: remover o registro **vencido** da mesma chave, se houver, e inserir em `idempotency_record (caller_id, idem_key, request_hash, order_id, response_status, response_body, expires_at)`, com chave única `(caller_id, idem_key)`, junto com o pedido, os itens com snapshot e o evento no outbox.
 3. Se a inserção violar a unicidade, desfazer a transação e ler o registro existente em uma nova leitura:
    - mesmo `requestHash`: devolver a resposta armazenada (mesmo status e corpo) com header `Idempotent-Replayed: true`;
    - `requestHash` diferente: `422 Unprocessable Entity` (chave reutilizada com outro conteúdo).
