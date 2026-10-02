@@ -1,0 +1,8 @@
+spring:
+  flyway:
+    locations: classpath:db/migration,classpath:db/testdata
+  datasource:
+    hikari:
+      # Acima de 20 para que as requisições concorrentes do QA-INT-02 cheguem ao banco,
+      # e não fiquem enfileiradas no pool.
+      maximum-pool-size: 30
