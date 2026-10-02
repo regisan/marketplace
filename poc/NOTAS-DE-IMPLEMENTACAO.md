@@ -47,8 +47,10 @@ Os contratos em `docs/` não foram alterados. Cada item traz a resolução adota
 | D-28 | `GET /orders/{id}` com identificador não numérico responde `404` | A 1.0.0 declara apenas `200`, `401` e `404` |
 | D-29 | `401` da v2 em Problem Details e da v1 em `{message}`; o formato é escolhido pelo prefixo da rota no filtro | O filtro roda antes do roteamento para o controller |
 | D-30 | `GET` de pedido de outro chamador devolve o mesmo corpo de um pedido inexistente | API-01: não revelar a existência do pedido |
+| D-31 | CI em `.github/workflows/poc.yml` com três jobs: build e testes, revisão de dependências (só em PR) e CodeQL (PR e `main`); o CodeQL compila com `-DskipTests` | Os testes já rodam no job de build; o CodeQL precisa apenas do bytecode |
 
 ## Problemas encontrados
 
 - O `poc/CLAUDE.md` versionado no primeiro commit era cópia do `CLAUDE.md` da raiz, sem a especificação. Foi substituído pelo autor antes do início da implementação.
 - Na primeira execução do `IdempotenciaIT`, o pool Hikari se esgotou: `JdbcClient...query().stream()` mantém a conexão aberta até o stream ser fechado. Trocado por `.list()`. O teste de concorrência expôs o vazamento, que passava despercebido nas requisições sequenciais.
+- O workflow `poc.yml` foi validado localmente apenas quanto à sintaxe YAML. A execução real no GitHub Actions depende de push, que não foi feito nesta sessão.

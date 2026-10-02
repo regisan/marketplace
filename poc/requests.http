@@ -1,0 +1,99 @@
+# Exemplos de chamadas para o perfil local (REST Client do VS Code ou HTTP Client do IntelliJ).
+# Tokens sintéticos em src/main/resources/application-local.yml.
+# Preço sintético do SKU-n: 10,00 + (n mod 50) x 2,50. SKU-0001 = 12,50; SKU-0042 = 115,00.
+
+@base = http://localhost:8080
+@chave = 0b9f4c7e-6a2d-4f5b-9a51-3c1e7d2f8a10
+
+### v2: criação (201)
+# @name criacao
+POST {{base}}/v2/orders
+Authorization: Bearer token-cliente-ana
+Idempotency-Key: {{chave}}
+Content-Type: application/json
+
+{
+  "customer": { "customerId": "c-10293", "name": "Cliente Sintético", "email": "cliente@exemplo.com" },
+  "items": [ { "sku": "SKU-0001", "quantity": 2 }, { "sku": "SKU-0042", "quantity": 1 } ],
+  "expectedTotal": { "amount": "140.00", "currency": "BRL" }
+}
+
+### v2: repetição com a mesma chave e o mesmo corpo (201 com Idempotent-Replayed: true, mesmo pedido)
+POST {{base}}/v2/orders
+Authorization: Bearer token-cliente-ana
+Idempotency-Key: {{chave}}
+Content-Type: application/json
+
+{
+  "customer": { "customerId": "c-10293", "name": "Cliente Sintético", "email": "cliente@exemplo.com" },
+  "items": [ { "sku": "SKU-0001", "quantity": 2 }, { "sku": "SKU-0042", "quantity": 1 } ],
+  "expectedTotal": { "amount": "140.00", "currency": "BRL" }
+}
+
+### v2: mesma chave com corpo diferente (422 idempotency-key-reuse)
+POST {{base}}/v2/orders
+Authorization: Bearer token-cliente-ana
+Idempotency-Key: {{chave}}
+Content-Type: application/json
+
+{
+  "customer": { "customerId": "c-10293", "name": "Cliente Sintético", "email": "cliente@exemplo.com" },
+  "items": [ { "sku": "SKU-0001", "quantity": 3 } ]
+}
+
+### v2: sem Idempotency-Key (400)
+POST {{base}}/v2/orders
+Authorization: Bearer token-cliente-ana
+Content-Type: application/json
+
+{
+  "customer": { "customerId": "c-10293", "name": "Cliente Sintético", "email": "cliente@exemplo.com" },
+  "items": [ { "sku": "SKU-0001", "quantity": 1 } ]
+}
+
+### v2: total esperado divergente (409 price-changed)
+POST {{base}}/v2/orders
+Authorization: Bearer token-cliente-ana
+Idempotency-Key: 6a1f0c3e-2b4d-4e8f-9a7b-1c2d3e4f5a6b
+Content-Type: application/json
+
+{
+  "customer": { "customerId": "c-10293", "name": "Cliente Sintético", "email": "cliente@exemplo.com" },
+  "items": [ { "sku": "SKU-0001", "quantity": 1 } ],
+  "expectedTotal": { "amount": "10.00", "currency": "BRL" }
+}
+
+### v2: consulta do pedido criado
+GET {{base}}/v2/orders/{{criacao.response.body.id}}
+Authorization: Bearer token-cliente-ana
+
+### v2: pedido de outro chamador (404)
+GET {{base}}/v2/orders/{{criacao.response.body.id}}
+Authorization: Bearer token-cliente-bruno
+
+### v1: consumidor atual, sem header (201; comportamento da 1.0.0)
+POST {{base}}/orders
+Authorization: Bearer token-erp
+Content-Type: application/json
+
+{ "customerId": "c-555", "items": [ { "sku": "SKU-0001", "quantity": 1 } ] }
+
+### v1: com Idempotency-Key opcional, pelo alias /v1/orders
+POST {{base}}/v1/orders
+Authorization: Bearer token-erp
+Idempotency-Key: 3c9e2a10-7d4b-4f61-8e2a-5b6c7d8e9f01
+Content-Type: application/json
+
+{ "customerId": "c-555", "items": [ { "sku": "SKU-0001", "quantity": 1 } ] }
+
+### v1: repetição pela rota /orders (mesma operação: 201 com Idempotent-Replayed: true)
+POST {{base}}/orders
+Authorization: Bearer token-erp
+Idempotency-Key: 3c9e2a10-7d4b-4f61-8e2a-5b6c7d8e9f01
+Content-Type: application/json
+
+{ "customerId": "c-555", "items": [ { "sku": "SKU-0001", "quantity": 1 } ] }
+
+### Consulta cruzada: pedido criado pela v2, lido pela v1 pelo legacyId
+GET {{base}}/orders/{{criacao.response.body.legacyId}}
+Authorization: Bearer token-cliente-ana
