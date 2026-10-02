@@ -2,6 +2,7 @@ package com.exemplo.pedidos.application;
 
 import com.exemplo.pedidos.domain.CatalogItemView;
 import com.exemplo.pedidos.domain.Order;
+import com.exemplo.pedidos.domain.OrderCreated;
 import com.exemplo.pedidos.domain.OrderLine;
 import com.exemplo.pedidos.domain.UuidV7;
 import java.math.BigDecimal;
@@ -23,16 +24,18 @@ public class CreateOrderUseCase {
 
     private final OrderRepository orders;
     private final CatalogItemViewRepository catalog;
+    private final OutboxRepository outbox;
     private final IdempotencyService idempotency;
     private final TransactionTemplate tx;
     private final Clock clock;
     private final BigDecimal priceTolerance;
 
-    public CreateOrderUseCase(OrderRepository orders, CatalogItemViewRepository catalog,
+    public CreateOrderUseCase(OrderRepository orders, CatalogItemViewRepository catalog, OutboxRepository outbox,
             IdempotencyService idempotency, TransactionTemplate tx, Clock clock,
             @Value("${pedidos.preco.tolerancia:0.00}") BigDecimal priceTolerance) {
         this.orders = orders;
         this.catalog = catalog;
+        this.outbox = outbox;
         this.idempotency = idempotency;
         this.tx = tx;
         this.clock = clock;
@@ -54,12 +57,14 @@ public class CreateOrderUseCase {
         }
 
         Order order = price(command);
+        OrderCreated event = OrderCreated.of(order, UuidV7.generate(clock));
         CreateOrderResult created = new CreateOrderResult(order.id(), 201, renderer.render(order), false);
         try {
             tx.executeWithoutResult(status -> {
                 idempotencyRequest.ifPresent(request ->
                         idempotency.reserve(caller, request, created, order.createdAt()));
                 orders.insert(order);
+                outbox.append(event);
             });
         } catch (IdempotencyKeyTakenException e) {
             return idempotency.resolveConflict(caller, idempotencyRequest.orElseThrow());

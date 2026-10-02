@@ -94,6 +94,7 @@ class IdempotenciaIT {
         assertThat(second.header("Location")).isEqualTo(first.header("Location"));
         ContractValidator.V2.assertValid("POST", "/orders", second.status(), second.headers(), second.body());
         assertThat(ordersOf(customerId)).isEqualTo(1);
+        assertThat(orderCreatedEventsOf(customerId)).isEqualTo(1);
     }
 
     @Test
@@ -142,6 +143,7 @@ class IdempotenciaIT {
             ContractValidator.V2.assertValid("POST", "/orders", response.status(), response.headers(), response.body());
         });
         assertThat(ordersOf(customerId)).isZero();
+        assertThat(orderCreatedEventsOf(customerId)).isZero();
     }
 
     @RepeatedTest(5)
@@ -170,6 +172,7 @@ class IdempotenciaIT {
                 .isEqualTo("https://api.exemplo.com/problems/idempotency-key-reuse");
         ContractValidator.V2.assertValid("POST", "/orders", response.status(), response.headers(), response.body());
         assertThat(ordersOf(customerId)).isEqualTo(1);
+        assertThat(orderCreatedEventsOf(customerId)).isEqualTo(1);
     }
 
     @Test
@@ -263,6 +266,7 @@ class IdempotenciaIT {
      */
     private void assertExactlyOneOrder(String customerId, String key, List<ApiClient.Response> responses) {
         assertThat(ordersOf(customerId)).isEqualTo(1);
+        assertThat(orderCreatedEventsOf(customerId)).isEqualTo(1);
         assertThat(jdbc.sql("SELECT count(*) FROM idempotency_record WHERE idem_key = ?").param(key)
                 .query(Integer.class).single()).isEqualTo(1);
 
@@ -352,6 +356,14 @@ class IdempotenciaIT {
 
     private int ordersOf(String customerId) {
         return jdbc.sql("SELECT count(*) FROM orders WHERE customer_id = ?").param(customerId)
+                .query(Integer.class).single();
+    }
+
+    private int orderCreatedEventsOf(String customerId) {
+        return jdbc.sql("""
+                        SELECT count(*) FROM outbox_event e JOIN orders o ON o.id = e.aggregate_id
+                        WHERE o.customer_id = ? AND e.event_type = 'OrderCreated'""")
+                .param(customerId)
                 .query(Integer.class).single();
     }
 

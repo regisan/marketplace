@@ -39,6 +39,9 @@ Os contratos em `docs/` não foram alterados. Cada item traz a resolução adota
 | D-20 | `RequestHasher` fica em `adapters.in.web`, compartilhado por v1 e v2, e não em `application` | A canonização depende do DTO de entrada e do Jackson, que são detalhes do adaptador |
 | D-21 | Um único contêiner PostgreSQL para todos os contextos Spring de teste | `IdempotenciaIT` tem propriedades próprias e gera outro contexto |
 | D-22 | Lock timeout no `INSERT` do pedido (corrida pela mesma `externalReference` entre chaves diferentes) também responde `409 request-in-progress` | Item A-8 do plano: a requisição concorrente ainda não sabe se a outra vai confirmar |
+| D-23 | O payload do `OrderCreated` é montado por um record com lista explícita de campos, sem nenhuma referência a `Customer` | Ausência de dados pessoais por construção (QA-PRI-02), e não por filtro |
+| D-24 | `partnerId` e `externalReference` saem como `null` no evento de cliente final | O schema do AsyncAPI declara `type: [string, "null"]` |
+| D-25 | O schema do AsyncAPI é validado como JSON Schema draft-07, com o documento registrado em memória no networknt 2.0.1 | O loader do networknt 2.x não abre URIs `file:`; o draft-07 é o formato padrão de schema do AsyncAPI 3.0 |
 
 ## Problemas encontrados
 
