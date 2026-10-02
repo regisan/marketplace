@@ -25,6 +25,14 @@ Os contratos em `docs/` não foram alterados. Cada item traz a resolução adota
 | D-7 | Trigger que rejeita `UPDATE` em `order_items` | Validação do ADR-004 (snapshot imutável, invariante 2 do agregado); não consta da especificação, adição de baixo custo |
 | D-8 | Dados sintéticos em `db/testdata`, aplicados só nos perfis `test` e `local` via `spring.flyway.locations` | Mantém o perfil padrão sem dados fictícios |
 | D-6 | Pool Hikari de 30 conexões no perfil de teste | Com o padrão de 10, parte das 20 requisições do QA-INT-02 ficaria enfileirada no pool e não chegaria ao banco ao mesmo tempo |
+| D-9 | O filtro de tokens sintéticos definitivo entrou na etapa 3, no lugar do resolvedor provisório planejado | Evita retrabalho; a etapa 7 só acrescenta `SegurancaIT` |
+| D-10 | `400` e `404` da v2 usam `type: about:blank` com `title` igual ao status (RFC 9457, seção 4.2.1); `400` traz `errors[]` | O contrato só define `type` para `409`, `422` e `503` |
+| D-11 | `GET /v2/orders/{orderId}` com identificador malformado responde `404` | O contrato declara apenas `200`, `401`, `404` e `429` para a consulta |
+| D-12 | Corpo ausente, JSON malformado e `Content-Type` não suportado respondem `400` na v2 | `415` não está declarado no contrato |
+| D-13 | Instantes truncados em milissegundos na criação | A resposta é serializada antes do commit (para ser armazenada no registro de idempotência) e precisa ser idêntica à lida depois do banco, que guarda microssegundos |
+| D-14 | Validação de entrada manual (`RequestValidator`), sem Bean Validation | Hibernate Validator não está na lista de dependências da seção 3 |
+| D-15 | Parceiro sem `externalReference` recebe `400`; para cliente final o campo é ignorado | O texto do contrato diz "obrigatório para parceiros; ignorado para clientes finais", mas o schema não marca o campo como obrigatório |
+| D-16 | `customerId` do corpo não é comparado com a identidade do token; a posse do pedido é sempre o chamador do token | Não há IdP real na PoC; limite registrado |
 
 ## Problemas encontrados
 

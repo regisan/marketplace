@@ -6,3 +6,11 @@ spring:
       # Acima de 20 para que as requisições concorrentes do QA-INT-02 cheguem ao banco,
       # e não fiquem enfileiradas no pool.
       maximum-pool-size: 30
+pedidos:
+  auth:
+    tokens:
+      token-cliente-ana: { callerId: cliente-ana, type: CUSTOMER, channel: WEB, country: BR }
+      token-cliente-bruno: { callerId: cliente-bruno, type: CUSTOMER, channel: APP, country: BR }
+      token-parceiro-acme: { callerId: parceiro-acme, type: PARTNER, partnerId: acme, channel: PARTNER, country: BR }
+      token-parceiro-globex: { callerId: parceiro-globex, type: PARTNER, partnerId: globex, channel: PARTNER, country: BR }
+      token-erp: { callerId: erp, type: INTERNAL, channel: WEB, country: BR }
