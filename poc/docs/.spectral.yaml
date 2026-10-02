@@ -1,0 +1,16 @@
+# Regras comuns a todos os contratos (OpenAPI v1, v2 e AsyncAPI).
+# Uso: npx @stoplight/spectral-cli lint <arquivo> -r .spectral.yaml --fail-severity error
+extends:
+  - [spectral:oas, recommended]
+  - [spectral:asyncapi, recommended]
+
+rules:
+  eventos-e-webhooks-sem-pii:
+    description: Payloads de eventos e webhooks não podem conter campos marcados com x-pii (ADR-002, ADR-008).
+    message: "Campo com dados pessoais em payload de evento ou webhook: {{path}}"
+    severity: error
+    given:
+      - "$.components.messages[*].payload..['x-pii']"
+      - "$.webhooks[*][*].requestBody..['x-pii']"
+    then:
+      function: falsy

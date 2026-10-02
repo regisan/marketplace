@@ -1,0 +1,53 @@
+@startuml seq-assistente-operacional
+!include estilos.iuml
+
+title Assistente Operacional - consulta de pedido, célula BR\n[docs/ia/assistente-de-pedidos.md; threat model IA-01 a IA-04]
+
+actor "Operador de\natendimento" as op
+participant "Assistente\nOperacional" as asst
+participant "IdP" as idp
+participant "Serviço de Pedidos\n(API interna)" as ped
+participant "Integração com Parceiros\n(API interna)" as integ
+participant "Provedor de LLM\n(região da célula)" as llm
+database "Registro de\nauditoria" as audit
+
+op -> asst: "Por que o parceiro não recebeu a\natualização do pedido MKT-998877?"\n(sessão SSO do operador)
+asst -> asst: guardrail de entrada: tamanho, escopo,\nlimite de consultas da sessão
+
+alt pergunta fora do escopo ou limite excedido
+  asst --> op: recusa explicando o escopo do Assistente
+else pergunta aceita
+  asst -> llm: prompt de sistema + catálogo de ferramentas\n+ pergunta (sem dados pessoais)\n(timeout 20 s, circuit breaker)
+  llm --> asst: solicita ferramenta buscarPedido\n{ externalReference: "MKT-998877" }
+
+  asst -> asst: valida ferramenta (lista fechada)\ne parâmetros (schema)
+  asst -> idp: troca de token em nome do operador\n(escopo orders:read-internal)
+  idp --> asst: token de curta duração
+  asst -> ped: GET /internal/orders?externalReference=MKT-998877\n(timeout 1 s)
+  ped --> asst: pedido (autorizado para o operador)
+  asst -> asst: minimiza (lista fechada de campos)\ne pseudonimiza (nome e e-mail viram CLIENTE_1)
+
+  asst -> llm: resultado da ferramenta, delimitado como dado
+  llm --> asst: solicita ferramenta entregasDeWebhook\n{ orderId }
+  asst -> integ: GET /internal/deliveries?orderId=...\n(timeout 1 s)
+  integ --> asst: tentativas, status, estado do circuit breaker
+  asst -> llm: resultado da ferramenta, delimitado como dado
+  llm --> asst: resposta com citações\n[pedido 0192f7a4..., entrega 3 tentativas, DLQ]
+
+  asst -> asst: verificador: todo identificador e valor citado\nexiste nos resultados das ferramentas
+  alt verificação falhou
+    asst --> op: "Não consegui confirmar a resposta com\nos dados consultados" + links para os registros
+  else verificação aprovada
+    asst -> asst: reidentifica CLIENTE_1 apenas para exibição
+    asst --> op: resposta com fontes clicáveis
+  end
+  asst -> audit: operador, pergunta pseudonimizada, ferramentas,\nidentificadores consultados, versão do prompt e do modelo
+end
+
+note over asst, llm
+  Se o provedor de LLM estiver indisponível ou o circuit breaker
+  aberto, o Assistente informa a indisponibilidade e oferece os links
+  de consulta direta no backoffice. Nenhum fluxo de pedidos depende dele.
+end note
+
+@enduml

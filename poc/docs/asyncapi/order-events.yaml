@@ -1,0 +1,248 @@
+asyncapi: 3.0.0
+info:
+  title: Eventos de Pedidos
+  version: 1.0.0
+  description: |
+    Eventos publicados pelo serviço de Pedidos via transactional outbox (ADR-006). Consumidores
+    atuais: Integração com Parceiros (ADR-008) e ERP.
+
+    ## Garantias de entrega
+    - Pelo menos uma vez: o mesmo evento pode ser entregue mais de uma vez. Consumidores
+      deduplicam por `eventId`.
+    - Ordem garantida apenas por pedido (chave de partição = `orderId`). Consumidores ignoram
+      eventos com `orderVersion` menor ou igual ao último aplicado.
+
+    ## Dados pessoais e residência
+    Os payloads não contêm dados pessoais. Cada célula tem seu próprio tópico, e eventos de
+    pedido nunca são replicados para fora da célula de origem (ADR-002).
+
+    ## Evolução (ADR-007)
+    Dentro de `schemaVersion` 1 só há mudanças aditivas. Consumidores devem ignorar campos
+    desconhecidos e tratar valores de enum desconhecidos sem falhar. Uma mudança incompatível
+    gera um novo `eventType` (por exemplo, `OrderStatusChanged.v2`), publicado em paralelo ao
+    anterior durante a transição.
+servers:
+  celula-br:
+    host: kafka.br.interno.exemplo.com:9092
+    protocol: kafka
+    description: Broker regional da célula BR.
+    security:
+      - $ref: "#/components/securitySchemes/brokerAuth"
+  celula-b:
+    host: kafka.b.interno.exemplo.com:9092
+    protocol: kafka
+    description: Broker regional da célula B.
+    security:
+      - $ref: "#/components/securitySchemes/brokerAuth"
+defaultContentType: application/json
+
+channels:
+  orderEvents:
+    address: orders.events
+    title: Eventos de pedido
+    description: |
+      Tópico único para o ciclo de vida do pedido. A chave da mensagem é o `orderId`, o que
+      garante ordem por pedido. Retenção de 7 dias, permitindo reprocessamento.
+    messages:
+      orderCreated:
+        $ref: "#/components/messages/OrderCreated"
+      orderStatusChanged:
+        $ref: "#/components/messages/OrderStatusChanged"
+    bindings:
+      kafka:
+        partitions: 24
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy: [delete]
+          retention.ms: 604800000
+        bindingVersion: "0.5.0"
+
+operations:
+  publishOrderEvents:
+    action: send
+    title: Publicar eventos de pedido
+    summary: O publicador do outbox de Pedidos envia os eventos gravados na mesma transação da mudança de estado.
+    channel:
+      $ref: "#/channels/orderEvents"
+    messages:
+      - $ref: "#/channels/orderEvents/messages/orderCreated"
+      - $ref: "#/channels/orderEvents/messages/orderStatusChanged"
+
+components:
+  securitySchemes:
+    brokerAuth:
+      type: scramSha512
+      description: Credenciais por serviço, com ACL de escrita apenas para Pedidos e de leitura por grupo de consumidores.
+
+  messages:
+    OrderCreated:
+      name: OrderCreated
+      title: Pedido criado
+      summary: Um pedido foi aceito e gravado no status CREATED.
+      contentType: application/json
+      headers:
+        $ref: "#/components/schemas/EventHeaders"
+      payload:
+        $ref: "#/components/schemas/OrderCreatedPayload"
+      bindings:
+        kafka:
+          key:
+            type: string
+            format: uuid
+            description: orderId
+          bindingVersion: "0.5.0"
+      examples:
+        - name: pedidoDeParceiro
+          headers:
+            eventType: OrderCreated
+            schemaVersion: 1
+          payload:
+            eventId: 0192f7a5-1b7e-7c22-8e01-5f3a9d2c4b11
+            eventType: OrderCreated
+            schemaVersion: 1
+            occurredAt: "2026-10-02T14:03:11.218Z"
+            orderId: 0192f7a4-3c2e-7b10-9f4d-2a6b8c1e5d70
+            orderVersion: 1
+            country: BR
+            status: CREATED
+            channel: PARTNER
+            partnerId: parceiro-acme
+            externalReference: MKT-998877
+            total:
+              amount: "389.70"
+              currency: BRL
+            itemCount: 2
+
+    OrderStatusChanged:
+      name: OrderStatusChanged
+      title: Status do pedido alterado
+      summary: O pedido mudou de status. Origem do webhook order.status_changed.
+      contentType: application/json
+      headers:
+        $ref: "#/components/schemas/EventHeaders"
+      payload:
+        $ref: "#/components/schemas/OrderStatusChangedPayload"
+      bindings:
+        kafka:
+          key:
+            type: string
+            format: uuid
+            description: orderId
+          bindingVersion: "0.5.0"
+      examples:
+        - name: pedidoEnviado
+          headers:
+            eventType: OrderStatusChanged
+            schemaVersion: 1
+          payload:
+            eventId: 0192f7b0-77aa-7d01-b3c2-9e8f6a5d4c32
+            eventType: OrderStatusChanged
+            schemaVersion: 1
+            occurredAt: "2026-10-03T09:15:42.007Z"
+            orderId: 0192f7a4-3c2e-7b10-9f4d-2a6b8c1e5d70
+            orderVersion: 3
+            country: BR
+            previousStatus: CONFIRMED
+            status: SHIPPED
+            partnerId: parceiro-acme
+            externalReference: MKT-998877
+
+  schemas:
+    EventHeaders:
+      type: object
+      description: Headers Kafka, para roteamento e filtragem sem desserializar o payload.
+      required: [eventType, schemaVersion]
+      properties:
+        eventType:
+          type: string
+        schemaVersion:
+          type: integer
+          minimum: 1
+        traceparent:
+          type: string
+          description: Contexto de rastreamento W3C Trace Context, propagado da requisição que originou o evento.
+          pattern: "^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"
+
+    EventEnvelope:
+      type: object
+      description: Campos comuns a todos os eventos de pedido.
+      required: [eventId, eventType, schemaVersion, occurredAt, orderId, orderVersion, country]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: Identificador único do evento (UUIDv7). Chave de deduplicação.
+        eventType:
+          type: string
+        schemaVersion:
+          type: integer
+          minimum: 1
+        occurredAt:
+          type: string
+          format: date-time
+          description: Instante da mudança de estado (gravação no outbox).
+        orderId:
+          type: string
+          format: uuid
+        orderVersion:
+          type: integer
+          minimum: 1
+          description: Versão do pedido após a mudança. Usada para descartar eventos fora de ordem.
+        country:
+          type: string
+          pattern: "^[A-Z]{2}$"
+
+    OrderCreatedPayload:
+      allOf:
+        - $ref: "#/components/schemas/EventEnvelope"
+        - type: object
+          required: [status, channel, total, itemCount]
+          properties:
+            eventType:
+              const: OrderCreated
+            status:
+              $ref: "#/components/schemas/OrderStatus"
+            channel:
+              type: string
+              description: "Enum extensível: WEB, APP, PARTNER, LEGACY_V1."
+            partnerId:
+              type: [string, "null"]
+            externalReference:
+              type: [string, "null"]
+            total:
+              $ref: "#/components/schemas/Money"
+            itemCount:
+              type: integer
+              minimum: 1
+
+    OrderStatusChangedPayload:
+      allOf:
+        - $ref: "#/components/schemas/EventEnvelope"
+        - type: object
+          required: [previousStatus, status]
+          properties:
+            eventType:
+              const: OrderStatusChanged
+            previousStatus:
+              $ref: "#/components/schemas/OrderStatus"
+            status:
+              $ref: "#/components/schemas/OrderStatus"
+            partnerId:
+              type: [string, "null"]
+            externalReference:
+              type: [string, "null"]
+
+    OrderStatus:
+      type: string
+      description: "Enum extensível. Valores atuais: CREATED, CONFIRMED, SHIPPED, DELIVERED, CANCELLED."
+
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount:
+          type: string
+          pattern: "^-?\\d{1,15}(\\.\\d{1,4})?$"
+        currency:
+          type: string
+          pattern: "^[A-Z]{3}$"

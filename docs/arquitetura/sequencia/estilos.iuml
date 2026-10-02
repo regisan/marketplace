@@ -1,0 +1,15 @@
+' Estilos compartilhados pelos diagramas de sequência.
+hide footbox
+autonumber "<b>00"
+skinparam maxMessageSize 260
+skinparam responseMessageBelowArrow true
+skinparam sequenceGroupBodyBackgroundColor transparent
+skinparam noteBackgroundColor #FFF8E1
+skinparam noteBorderColor #F9A825
+skinparam participantBackgroundColor #E3F2FD
+skinparam participantBorderColor #0D47A1
+skinparam databaseBackgroundColor #E3F2FD
+skinparam databaseBorderColor #0D47A1
+skinparam queueBackgroundColor #E3F2FD
+skinparam queueBorderColor #0D47A1
+skinparam actorBorderColor #0D47A1

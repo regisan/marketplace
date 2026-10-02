@@ -1,0 +1,36 @@
+@startuml c4-conteineres-as-is
+!include <C4/C4_Container>
+!include estilos.iuml
+
+title Contêineres - AS-IS (pontos de falha F1 a F6)
+
+Person(cliente, "Cliente", "Canal web nacional.")
+System_Ext(idp, "Identidade (IdP)", "Emite tokens OIDC.")
+System_Ext(backoffice, "Backoffice", "Atendimento e operação.")
+System_Ext(erp, "ERP", "Faturamento e gestão.")
+
+Boundary(regiao, "[F5] Nuvem pública - região Brasil (única, multi-AZ)", $tags="confianca") {
+  System_Boundary(plataforma, "Plataforma de Pedidos e Catálogo") {
+    Container(web, "Frontend Web", "SPA + BFF", "Interface de compra do canal web.")
+    Container(pedidos, "Serviço de Pedidos", "Java 17, Spring Boot 3", "Cria e consulta pedidos. API REST /orders sem versão.")
+    ContainerDb(pedidos_db, "Banco de Pedidos", "PostgreSQL", "Pedidos e itens com referência ao SKU, sem snapshot.")
+    Container(catalogo, "Serviço de Catálogo", "Java 17, Spring Boot 3", "Produtos, SKUs, descrições e preço vigente.")
+    ContainerDb(catalogo_db, "Banco de Catálogo", "PostgreSQL", "Produtos e preços.")
+    ContainerQueue(broker, "Broker de eventos", "Kafka gerenciado", "Eventos de pedido.")
+  }
+}
+
+Rel(cliente, web, "Usa", "HTTPS")
+Rel(cliente, idp, "Autentica-se", "OIDC")
+Rel(web, pedidos, "[F2] Cria pedido; retries sem chave de idempotência", "REST /orders", $tags="problema")
+Rel(pedidos, catalogo, "[F1] Busca produto e preço, uma chamada por item (N+1)", "REST síncrono", $tags="problema")
+Rel(pedidos, pedidos_db, "[F3] Grava pedido sem snapshot de preço e descrição", "JDBC", $tags="problema")
+Rel(pedidos, broker, "[F4] Publica evento após o commit (dual write)", "Kafka", $tags="problema")
+Rel(pedidos, idp, "Valida tokens", "JWKS")
+Rel(catalogo, catalogo_db, "Lê e grava", "JDBC")
+Rel(backoffice, pedidos, "[F6] Consulta pedidos", "REST /orders sem versão", $tags="problema")
+Rel(erp, pedidos, "[F6] Consulta pedidos", "REST /orders sem versão", $tags="problema")
+Rel(erp, broker, "Consome eventos de pedido", "Kafka")
+
+SHOW_LEGEND()
+@enduml

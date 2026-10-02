@@ -1,0 +1,25 @@
+@startuml c4-contexto-as-is
+!include <C4/C4_Context>
+!include estilos.iuml
+
+title Contexto - AS-IS (canal web nacional)
+
+Person(cliente, "Cliente", "Compra pelo canal web nacional.")
+Person(operador, "Operador de atendimento", "Consulta e acompanha pedidos.")
+
+System(plataforma, "Plataforma de Pedidos e Catálogo", "Recebe pedidos do canal web e mantém o catálogo de produtos. Região única no Brasil.")
+
+System_Ext(idp, "Identidade (IdP)", "Autentica clientes do canal web.")
+System_Ext(backoffice, "Backoffice", "Sistema interno de atendimento e operação.")
+System_Ext(erp, "ERP", "Faturamento e gestão.")
+System_Ext(suporte, "Pagamento, Estoque, Frete e Fiscal", "Sistemas de suporte existentes.", $tags="fora_escopo")
+
+Rel(cliente, plataforma, "Navega no catálogo e cria pedidos", "HTTPS")
+Rel(cliente, idp, "Autentica-se", "OIDC")
+Rel(operador, backoffice, "Usa")
+Rel(backoffice, plataforma, "Consulta pedidos", "REST sem versão")
+Rel(erp, plataforma, "Consulta pedidos e consome eventos", "REST sem versão e Kafka")
+Rel(plataforma, suporte, "Integração existente (Q-10)", $tags="fora_escopo")
+
+SHOW_LEGEND()
+@enduml

@@ -1,0 +1,54 @@
+name: diagramas
+
+on:
+  pull_request:
+    paths:
+      - "docs/arquitetura/**/*.puml"
+      - "docs/arquitetura/**/*.iuml"
+      - "scripts/render-diagramas.sh"
+  push:
+    branches: [main]
+    paths:
+      - "docs/arquitetura/**/*.puml"
+      - "docs/arquitetura/**/*.iuml"
+      - "scripts/render-diagramas.sh"
+
+jobs:
+  diagramas:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Instalar Graphviz
+        run: sudo apt-get update && sudo apt-get install -y graphviz
+
+      - name: Cache do PlantUML
+        uses: actions/cache@v4
+        with:
+          path: .tools
+          key: plantuml-${{ hashFiles('scripts/render-diagramas.sh') }}
+
+      # Pull request: fitness function de sintaxe. Quebra o build se algum diagrama for inválido.
+      - name: Validar sintaxe
+        if: github.event_name == 'pull_request'
+        run: ./scripts/render-diagramas.sh --check
+
+      # Main: renderiza os SVGs e faz commit, para que o GitHub mostre as imagens no README.
+      - name: Renderizar e publicar SVGs
+        if: github.event_name == 'push'
+        run: |
+          ./scripts/render-diagramas.sh
+          if [[ -n "$(git status --porcelain docs/arquitetura)" ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add docs/arquitetura
+            git commit -m "docs: atualiza SVGs dos diagramas [skip ci]"
+            git push
+          fi

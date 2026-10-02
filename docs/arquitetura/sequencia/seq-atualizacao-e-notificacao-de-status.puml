@@ -1,0 +1,96 @@
+@startuml seq-atualizacao-e-notificacao-de-status
+!include estilos.iuml
+
+title Atualização de status e notificação a parceiros - célula BR\n[ADR-006, ADR-008]
+
+participant "Sistema de origem\n(Backoffice, logística)" as orig
+participant "Serviço de\nPedidos" as ped
+database "Banco de\nPedidos" as db
+participant "Publicador do outbox\n(Pedidos)" as pub
+queue "Broker\nregional" as broker
+participant "Integração com\nParceiros" as integ
+database "Banco de\nIntegração" as idb
+participant "Parceiro de\nmarketplace" as parc
+participant "API Gateway\nregional" as gw
+
+== Transição de status [mapa de domínios, invariantes 3 e 4] ==
+
+orig -> ped: POST /internal/orders/{id}/transitions\n{ toStatus: SHIPPED, expectedVersion: 2 }
+ped -> db: BEGIN; SELECT orders WHERE id = {id} FOR UPDATE
+
+alt transição não permitida pela máquina de estados
+  ped -> db: ROLLBACK
+  ped --> orig: 422 Problem Details (invalid-transition)
+else version atual diferente de expectedVersion
+  ped -> db: ROLLBACK
+  ped --> orig: 409 Problem Details (version-conflict)\ncom versão atual
+else transição válida
+  ped -> db: UPDATE orders SET status = SHIPPED, version = 3
+  ped -> db: INSERT status_transition (CONFIRMED -> SHIPPED, origem, instante)
+  ped -> db: INSERT outbox_event OrderStatusChanged\n{ eventId, orderId, orderVersion 3, status,\npartnerId, externalReference } sem PII
+  ped -> db: COMMIT
+  ped --> orig: 200 OK
+end
+
+== Publicação [ADR-006] ==
+
+pub -> db: lê lote pendente do outbox (SKIP LOCKED)
+pub -> broker: publica OrderStatusChanged\n(chave de partição = orderId)
+pub -> db: marca published_at
+
+== Consumo e enfileiramento por parceiro [ADR-008] ==
+
+broker -> integ: OrderStatusChanged (eventId e1)
+integ -> idb: BEGIN; INSERT processed_event (e1)
+
+alt e1 já processado (entrega duplicada do broker)
+  integ -> idb: ROLLBACK
+  integ -> broker: confirma offset (descarta duplicata)
+else evento novo
+  integ -> idb: SELECT webhook_subscription\nWHERE partner_id = ? AND event_type = 'order.status_changed'
+  opt parceiro possui assinatura ativa
+    integ -> idb: INSERT webhook_delivery (PENDING)\nna fila do parceiro
+  end
+  integ -> idb: COMMIT
+  integ -> broker: confirma offset
+end
+
+== Entrega do webhook: worker dedicado ao parceiro (bulkhead) ==
+
+loop até sucesso ou 24 h de tentativas\n(backoff exponencial com jitter: ~10 s, 30 s, 2 min, 10 min, 1 h, depois a cada 2 h)
+  alt circuit breaker do parceiro aberto
+    integ -> integ: mantém a entrega em espera;\nsondagem periódica do endpoint
+    note right of integ
+      Falhas deste parceiro não consomem
+      threads nem conexões dos demais.
+    end note
+  else circuit breaker fechado ou semiaberto
+    integ -> integ: resolve DNS da URL e bloqueia IPs privados,\nloopback e de metadados (anti-SSRF)
+    integ -> integ: assina HMAC-SHA256(timestamp + "." + corpo)
+    integ -> parc: POST {url da assinatura} (timeout 5 s)\nWebhook-Signature, Webhook-Timestamp\n{ eventId, eventType, occurredAt, orderId,\nexternalReference, status, orderVersion }
+    alt resposta 2xx
+      parc -> parc: valida assinatura e janela de 5 min;\ndeduplica por eventId;\ndescarta se orderVersion menor que a conhecida
+      parc --> integ: 204 No Content
+      integ -> idb: webhook_delivery = DELIVERED
+      note right of integ: encerra as tentativas
+    else timeout, erro de rede ou resposta diferente de 2xx
+      integ -> idb: registra tentativa com falha;\nagenda a próxima; atualiza o circuit breaker
+    end
+  end
+end
+
+opt 24 h sem sucesso
+  integ -> idb: webhook_delivery = DEAD_LETTER
+  integ -> integ: alerta para operação;\nreenvio manual pelo backoffice
+end
+
+== Reconciliação pelo parceiro (recupera notificações perdidas) ==
+
+parc -> gw: GET /v2/orders?updatedSince=2026-10-01T00:00:00Z&cursor=...\nAuthorization: Bearer (token do parceiro)
+gw -> ped: encaminha (escopo restrito aos pedidos do parceiro)
+ped -> db: SELECT orders WHERE partner_id = ? AND updated_at >= ?\nORDER BY updated_at, id LIMIT 100
+db --> ped: página de pedidos
+ped --> gw: 200 OK { items, nextCursor }
+gw --> parc: 200 OK
+
+@enduml

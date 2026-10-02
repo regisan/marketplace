@@ -1,0 +1,90 @@
+# Fitness functions de governança (docs/governanca/fitness-functions.md).
+name: governanca
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  adrs-e-excecoes:
+    name: ADRs e exceções (FF-07, FF-10)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: FF-07 - Estrutura e índice dos ADRs
+        run: bash scripts/verificar-adrs.sh
+      - name: FF-10 - Exceções técnicas vencidas ou inexistentes
+        run: bash scripts/verificar-excecoes.sh
+
+  contratos:
+    name: Contratos (FF-01 a FF-06)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: poc/docs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: FF-01 e FF-03 - Spectral, regras comuns (v1, linha de base e eventos)
+        run: >
+          npx --yes @stoplight/spectral-cli@6 lint
+          openapi/baseline/orders-v1.0.0.yaml openapi/orders-v1.yaml asyncapi/order-events.yaml
+          -r .spectral.yaml --fail-severity error
+
+      - name: FF-02 - Spectral, regras da v2
+        run: npx --yes @stoplight/spectral-cli@6 lint openapi/orders-v2.yaml -r .spectral-v2.yaml --fail-severity error
+
+      - name: FF-04 - Validação estrutural do AsyncAPI
+        run: |
+          npx --yes @asyncapi/cli config analytics --disable || true
+          npx --yes @asyncapi/cli validate asyncapi/order-events.yaml
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Instalar oasdiff
+        # Confirmar o caminho do módulo na documentação do oasdiff ao fixar a versão.
+        run: go install github.com/oasdiff/oasdiff@latest
+
+      - name: FF-05 - v1 atual compatível com a linha de base dos consumidores atuais
+        run: |
+          IGNORE=""
+          [[ -f ../../docs/governanca/excecoes/oasdiff-err-ignore.txt ]] && IGNORE="--err-ignore ../../docs/governanca/excecoes/oasdiff-err-ignore.txt"
+          oasdiff breaking openapi/baseline/orders-v1.0.0.yaml openapi/orders-v1.yaml --fail-on ERR $IGNORE
+
+      - name: FF-06 - Nenhuma quebra em relação à branch de destino
+        if: github.event_name == 'pull_request'
+        run: |
+          IGNORE=""
+          [[ -f ../../docs/governanca/excecoes/oasdiff-err-ignore.txt ]] && IGNORE="--err-ignore ../../docs/governanca/excecoes/oasdiff-err-ignore.txt"
+          for spec in openapi/orders-v1.yaml openapi/orders-v2.yaml; do
+            if git cat-file -e "origin/${{ github.base_ref }}:poc/docs/${spec}" 2>/dev/null; then
+              git show "origin/${{ github.base_ref }}:poc/docs/${spec}" > /tmp/base.yaml
+              echo "Comparando ${spec} com ${{ github.base_ref }}"
+              oasdiff breaking /tmp/base.yaml "${spec}" --fail-on ERR $IGNORE
+            else
+              echo "${spec} não existe em ${{ github.base_ref }}; nada a comparar."
+            fi
+          done
+
+  links:
+    name: Links internos da documentação (FF-09)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: FF-09 - Links Markdown quebrados
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --offline --no-progress --exclude-path .tools './**/*.md'
+          fail: true

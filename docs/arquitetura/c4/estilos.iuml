@@ -1,0 +1,13 @@
+' Estilos compartilhados pelos diagramas C4 (AS-IS e TO-BE).
+' Incluído depois de C4_Context ou C4_Container.
+
+AddElementTag("novo", $bgColor="#2E7D32", $borderColor="#1B5E20", $fontColor="#FFFFFF", $legendText="Novo na arquitetura-alvo")
+AddElementTag("alterado", $bgColor="#0D47A1", $borderColor="#F9A825", $fontColor="#FFFFFF", $legendText="Alterado na arquitetura-alvo")
+AddElementTag("fora_escopo", $bgColor="#BDBDBD", $borderColor="#9E9E9E", $fontColor="#424242", $legendText="Externo, fora do escopo (P-DOM-02)")
+
+AddRelTag("problema", $textColor="#C62828", $lineColor="#C62828", $lineStyle=DashedLine(), $legendText="Problema atual (F1 a F6)")
+AddRelTag("contingencia", $textColor="#6D4C41", $lineColor="#6D4C41", $lineStyle=DottedLine(), $legendText="Caminho de contingência")
+AddRelTag("fora_escopo", $textColor="#757575", $lineColor="#9E9E9E", $lineStyle=DottedLine(), $legendText="Integração fora do escopo")
+
+AddBoundaryTag("confianca", $borderColor="#C62828", $fontColor="#C62828", $borderStyle=DashedLine(), $legendText="Fronteira de confiança")
+AddBoundaryTag("residencia", $borderColor="#6A1B9A", $fontColor="#6A1B9A", $borderStyle=BoldLine(), $legendText="Célula: fronteira de confiança e de residência de dados")

@@ -1,0 +1,628 @@
+openapi: 3.1.0
+info:
+  title: Pedidos - API v2
+  version: 2.0.0
+  description: |
+    API pública de Pedidos para web, app e parceiros de marketplace, disponível em cada célula
+    (ADR-002) pelo hostname regional do país do titular dos dados.
+
+    ## Garantias
+    - **Idempotência** (ADR-005): `POST /orders` exige `Idempotency-Key`. Para um mesmo chamador
+      e uma mesma chave, existe no máximo um pedido durante 24 horas.
+    - **Snapshot** (ADR-004): preço, moeda e descrição dos itens são gravados na criação e não
+      mudam depois.
+    - **Notificações** (ADR-008): parceiros recebem o webhook `orderStatusChanged` e podem
+      reconciliar com `GET /orders?updatedSince=`.
+
+    ## Compatibilidade (ADR-007)
+    Dentro da versão 2 só há mudanças aditivas. Clientes devem ignorar campos desconhecidos e
+    tratar valores de enum desconhecidos de forma genérica (os enums de `status` e `channel`
+    são extensíveis). Erros seguem RFC 9457 (Problem Details) e são diferenciados pelo campo
+    `type`, nunca apenas pelo status HTTP.
+
+    ## Dados pessoais
+    Campos marcados com `x-pii: true` são dados pessoais. Eles nunca aparecem em eventos nem
+    em webhooks, e são armazenados apenas na célula do país do titular.
+  contact:
+    name: Time de Pedidos
+servers:
+  - url: https://api-br.exemplo.com/v2
+    description: Célula BR (titulares no Brasil)
+  - url: https://api-b.exemplo.com/v2
+    description: Célula B (titulares no País B)
+tags:
+  - name: Pedidos
+    description: Criação, consulta e reconciliação de pedidos.
+  - name: Notificações
+    description: Webhooks enviados pela plataforma aos parceiros.
+security:
+  - partnerOAuth: [orders:read]
+  - customerBearer: []
+paths:
+  /orders:
+    post:
+      tags: [Pedidos]
+      operationId: createOrder
+      summary: Cria um pedido
+      description: |
+        Precifica os itens pelo catálogo vigente do país, grava o snapshot de cada item e devolve
+        o pedido no status `CREATED`. Repetir a chamada com a mesma `Idempotency-Key` e o mesmo
+        corpo devolve a resposta original, sem criar outro pedido.
+      security:
+        - partnerOAuth: [orders:write]
+        - customerBearer: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrderRequest"
+            examples:
+              parceiro:
+                $ref: "#/components/examples/CreateOrderPartner"
+      responses:
+        "201":
+          description: Pedido criado, ou repetição de uma criação anterior com a mesma chave.
+          headers:
+            Location:
+              description: URL do pedido criado.
+              schema:
+                type: string
+                format: uri
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: |
+            Conflito. O campo `type` indica a causa:
+            - `price-changed`: `expectedTotal` diverge do total calculado acima da tolerância;
+              `currentItems` traz os preços atuais.
+            - `request-in-progress`: outra requisição com a mesma chave ainda está em
+              processamento; repetir após `Retry-After`.
+            - `duplicate-external-reference`: o parceiro já criou um pedido com esta
+              `externalReference`; `existingOrderId` identifica o pedido.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              examples:
+                precoAlterado:
+                  $ref: "#/components/examples/ProblemPriceChanged"
+                emAndamento:
+                  $ref: "#/components/examples/ProblemRequestInProgress"
+                referenciaDuplicada:
+                  $ref: "#/components/examples/ProblemDuplicateExternalReference"
+        "422":
+          description: |
+            Requisição bem formada, mas não processável. O campo `type` indica a causa:
+            - `idempotency-key-reuse`: a chave já foi usada com um corpo diferente.
+            - `unknown-sku`: um ou mais SKUs não existem ou não estão à venda no país.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              examples:
+                chaveReutilizada:
+                  $ref: "#/components/examples/ProblemIdempotencyKeyReuse"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+    get:
+      tags: [Pedidos]
+      operationId: listOrders
+      summary: Lista pedidos do chamador, em ordem de atualização
+      description: |
+        Usado por parceiros para reconciliação (ADR-008) e por clientes para listar os próprios
+        pedidos. Retorna apenas pedidos do chamador. A ordenação é por `updatedAt` e `id`,
+        crescente, e a paginação é por cursor opaco.
+      parameters:
+        - name: updatedSince
+          in: query
+          required: false
+          description: Retorna pedidos atualizados a partir deste instante (inclusive).
+          schema:
+            type: string
+            format: date-time
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/OrderStatus"
+        - name: cursor
+          in: query
+          required: false
+          description: Valor de `nextCursor` da página anterior.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: Página de pedidos.
+          headers:
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /orders/{orderId}:
+    get:
+      tags: [Pedidos]
+      operationId: getOrder
+      summary: Consulta um pedido
+      description: |
+        Retorna o pedido se ele pertencer ao chamador. Pedidos de outros chamadores retornam
+        `404`, e não `403`, para não revelar sua existência.
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Pedido encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+webhooks:
+  orderStatusChanged:
+    post:
+      tags: [Notificações]
+      operationId: orderStatusChangedWebhook
+      summary: Notificação de mudança de status, enviada ao parceiro
+      description: |
+        Enviada pela plataforma à URL cadastrada na assinatura do parceiro (ADR-008).
+
+        **Verificação.** O parceiro deve calcular
+        `HMAC-SHA256(segredo, Webhook-Timestamp + "." + corpo bruto)`, comparar com
+        `Webhook-Signature` em tempo constante e rejeitar mensagens com timestamp fora de uma
+        janela de 5 minutos. Durante a rotação de segredo, o header pode trazer duas assinaturas.
+
+        **Entrega.** Pelo menos uma vez, sem garantia de ordem. Deduplicar por `eventId` e
+        descartar notificações com `orderVersion` menor ou igual à última conhecida.
+
+        **Retry.** Qualquer resposta diferente de 2xx, ou ausência de resposta em 5 segundos, é
+        falha. Novas tentativas com backoff exponencial por até 24 horas; depois disso a entrega
+        vai para a fila de mensagens mortas e pode ser reenviada pela operação.
+
+        **Payload.** Não contém dados pessoais. Para detalhes, consultar `GET /orders/{orderId}`.
+      security: []
+      parameters:
+        - name: Webhook-Signature
+          in: header
+          required: true
+          description: Uma ou mais assinaturas separadas por espaço, no formato `v1=<hex>`.
+          schema:
+            type: string
+            pattern: "^v1=[0-9a-f]{64}( v1=[0-9a-f]{64})?$"
+        - name: Webhook-Timestamp
+          in: header
+          required: true
+          description: Instante do envio, em segundos desde a época Unix.
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderStatusChangedNotification"
+      responses:
+        "2XX":
+          description: Notificação recebida. O corpo da resposta é ignorado.
+
+components:
+  securitySchemes:
+    partnerOAuth:
+      type: oauth2
+      description: Parceiros de marketplace (OAuth2 client credentials, ADR-008).
+      flows:
+        clientCredentials:
+          tokenUrl: https://idp.exemplo.com/oauth2/token
+          scopes:
+            orders:read: Consultar os próprios pedidos
+            orders:write: Criar pedidos
+    customerBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Clientes finais (token OIDC emitido pelo IdP para web e app).
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Chave única por tentativa lógica de criação, gerada pelo chamador (UUID recomendado).
+        Escopo: chamador autenticado. Validade: 24 horas (ADR-005).
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+      example: 0b9f4c7e-6a2d-4f5b-9a51-3c1e7d2f8a10
+
+  headers:
+    IdempotentReplayed:
+      description: Presente e igual a `true` quando a resposta é a repetição de uma criação anterior.
+      schema:
+        type: boolean
+    RetryAfter:
+      description: Segundos a aguardar antes de tentar novamente.
+      schema:
+        type: integer
+        minimum: 1
+    RateLimitRemaining:
+      description: Requisições restantes na janela de quota do chamador.
+      schema:
+        type: integer
+
+  responses:
+    BadRequest:
+      description: Requisição inválida (formato, campos obrigatórios ou `Idempotency-Key` ausente).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Unauthorized:
+      description: Token ausente, inválido ou expirado.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Forbidden:
+      description: Token válido sem o escopo necessário ou emitido para outra célula.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    NotFound:
+      description: Pedido inexistente ou não pertencente ao chamador.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    TooManyRequests:
+      description: Quota do chamador excedida.
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    ServiceUnavailable:
+      description: |
+        Indisponibilidade temporária, por exemplo `catalog-unavailable` quando um SKU ainda não
+        está no catálogo local e o Catálogo não respondeu a tempo (ADR-003).
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+
+  schemas:
+    CreateOrderRequest:
+      type: object
+      required: [customer, items]
+      properties:
+        customer:
+          $ref: "#/components/schemas/Customer"
+        items:
+          type: array
+          minItems: 1
+          maxItems: 300
+          items:
+            $ref: "#/components/schemas/CreateOrderItem"
+        expectedTotal:
+          description: |
+            Total que o chamador exibiu ao comprador. Se divergir do total calculado acima da
+            tolerância, a criação retorna `409 price-changed` (ADR-003, P-DOM-05).
+          $ref: "#/components/schemas/Money"
+        externalReference:
+          type: string
+          maxLength: 64
+          description: |
+            Identificador do pedido no sistema do parceiro. Obrigatório para parceiros e único
+            por parceiro; ignorado para clientes finais.
+
+    CreateOrderItem:
+      type: object
+      required: [sku, quantity]
+      properties:
+        sku:
+          type: string
+          maxLength: 64
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 999
+
+    Customer:
+      type: object
+      required: [customerId, name, email]
+      properties:
+        customerId:
+          type: string
+          maxLength: 64
+        name:
+          type: string
+          maxLength: 200
+          x-pii: true
+        email:
+          type: string
+          format: email
+          x-pii: true
+
+    Order:
+      type: object
+      required: [id, country, status, version, channel, customer, items, total, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        legacyId:
+          type: integer
+          format: int64
+          description: |
+            Identificador na API v1. Presente apenas em pedidos da célula BR enquanto a v1
+            existir (débito técnico aceito no ADR-007).
+        country:
+          type: string
+          pattern: "^[A-Z]{2}$"
+          description: País do pedido (ISO 3166-1 alfa-2); determina a célula.
+        status:
+          $ref: "#/components/schemas/OrderStatus"
+        version:
+          type: integer
+          minimum: 1
+          description: Incrementada a cada transição de status. Usada para ordenar notificações.
+        channel:
+          type: string
+          description: "Canal de origem. Enum extensível: valores atuais WEB, APP, PARTNER, LEGACY_V1."
+          examples: [WEB, APP, PARTNER, LEGACY_V1]
+        externalReference:
+          type: string
+        customer:
+          $ref: "#/components/schemas/Customer"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderItem"
+        total:
+          $ref: "#/components/schemas/Money"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    OrderItem:
+      type: object
+      required: [sku, quantity, snapshot]
+      properties:
+        sku:
+          type: string
+        quantity:
+          type: integer
+        snapshot:
+          $ref: "#/components/schemas/ItemSnapshot"
+
+    ItemSnapshot:
+      type: object
+      description: Cópia imutável dos dados de catálogo no momento da criação (ADR-004).
+      required: [unitPrice, description, catalogVersion, capturedAt, snapshotSource]
+      properties:
+        unitPrice:
+          $ref: "#/components/schemas/Money"
+        description:
+          type: string
+        catalogVersion:
+          type: integer
+          format: int64
+        capturedAt:
+          type: string
+          format: date-time
+        snapshotSource:
+          type: string
+          description: "`CAPTURED` para pedidos novos; `RECONSTRUCTED` para backfill de pedidos antigos."
+          examples: [CAPTURED, RECONSTRUCTED]
+
+    OrderStatus:
+      type: string
+      description: |
+        Enum extensível. Valores atuais: CREATED, CONFIRMED, SHIPPED, DELIVERED, CANCELLED.
+        Clientes devem tratar valores desconhecidos sem falhar.
+      examples: [CREATED, CONFIRMED, SHIPPED, DELIVERED, CANCELLED]
+
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount:
+          type: string
+          pattern: "^-?\\d{1,15}(\\.\\d{1,4})?$"
+          description: Valor decimal em texto, para evitar perda de precisão.
+          examples: ["129.90"]
+        currency:
+          type: string
+          pattern: "^[A-Z]{3}$"
+          description: ISO 4217.
+          examples: [BRL]
+
+    OrderPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Order"
+        nextCursor:
+          type: [string, "null"]
+          description: Ausente ou nulo na última página.
+
+    OrderStatusChangedNotification:
+      type: object
+      description: Payload do webhook. Não contém dados pessoais.
+      required: [eventId, eventType, occurredAt, orderId, status, orderVersion]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        eventType:
+          type: string
+          const: order.status_changed
+        occurredAt:
+          type: string
+          format: date-time
+        orderId:
+          type: string
+          format: uuid
+        externalReference:
+          type: string
+        status:
+          $ref: "#/components/schemas/OrderStatus"
+        orderVersion:
+          type: integer
+          minimum: 1
+
+    Problem:
+      type: object
+      description: RFC 9457 Problem Details, com extensões documentadas por `type`.
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri
+          description: "Identifica a causa, por exemplo https://api.exemplo.com/problems/price-changed."
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+        retryable:
+          type: boolean
+          description: Indica se repetir a mesma requisição pode ter sucesso.
+        existingOrderId:
+          type: string
+          format: uuid
+          description: Presente em `duplicate-external-reference`.
+        currentItems:
+          type: array
+          description: Presente em `price-changed`.
+          items:
+            type: object
+            properties:
+              sku:
+                type: string
+              unitPrice:
+                $ref: "#/components/schemas/Money"
+        errors:
+          type: array
+          description: Detalhes de validação, presentes em `400` e `unknown-sku`.
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+
+  examples:
+    CreateOrderPartner:
+      summary: Pedido de parceiro com dois itens
+      value:
+        customer:
+          customerId: c-10293
+          name: Maria Exemplo
+          email: maria@exemplo.com
+        items:
+          - sku: SKU-0001
+            quantity: 2
+          - sku: SKU-0042
+            quantity: 1
+        expectedTotal:
+          amount: "389.70"
+          currency: BRL
+        externalReference: MKT-998877
+    ProblemPriceChanged:
+      summary: Preço alterado desde a exibição
+      value:
+        type: https://api.exemplo.com/problems/price-changed
+        title: O preço de um ou mais itens mudou
+        status: 409
+        retryable: true
+        currentItems:
+          - sku: SKU-0042
+            unitPrice:
+              amount: "139.90"
+              currency: BRL
+    ProblemRequestInProgress:
+      summary: Mesma chave em processamento
+      value:
+        type: https://api.exemplo.com/problems/request-in-progress
+        title: Requisição com a mesma chave em processamento
+        status: 409
+        retryable: true
+    ProblemDuplicateExternalReference:
+      summary: Referência externa já usada pelo parceiro
+      value:
+        type: https://api.exemplo.com/problems/duplicate-external-reference
+        title: Já existe um pedido com esta referência externa
+        status: 409
+        retryable: false
+        existingOrderId: 0192f7a4-3c2e-7b10-9f4d-2a6b8c1e5d70
+    ProblemIdempotencyKeyReuse:
+      summary: Chave reutilizada com outro corpo
+      value:
+        type: https://api.exemplo.com/problems/idempotency-key-reuse
+        title: Idempotency-Key já usada com outro conteúdo
+        status: 422
+        retryable: false

@@ -1,0 +1,72 @@
+@startuml c4-conteineres-to-be
+!include <C4/C4_Container>
+!include estilos.iuml
+
+title Contêineres - TO-BE (detalhe da célula BR; célula B com a mesma composição)
+
+Person(cliente, "Cliente", "Web e app.")
+Person(operador, "Operador de atendimento", "Equipe interna.")
+System_Ext(parceiros, "Parceiros de marketplace", "Sistemas de terceiros.", $tags="novo")
+System_Ext(idp, "Identidade (IdP)", "OIDC e OAuth2.")
+System_Ext(backoffice, "Backoffice", "Atendimento e operação.")
+System_Ext(erp, "ERP", "Faturamento e gestão.")
+System_Ext(llm, "Provedor de LLM", "Endpoint na região da célula, sem retenção.", $tags="novo")
+
+Boundary(central, "Serviços centrais - região Brasil (sem dados pessoais)", $tags="confianca") {
+  Container(catalogo, "Serviço de Catálogo", "Java, Spring Boot", "Fonte de verdade de produtos e preços por país. Publica mudanças via outbox. [ADR-006]", $tags="alterado")
+  ContainerDb(catalogo_db, "Banco de Catálogo", "PostgreSQL", "Produtos, preços por país e outbox_event.", $tags="alterado")
+  ContainerQueue(broker_cat, "Tópico de catálogo", "Kafka gerenciado", "CatalogItemChanged, particionado por SKU.", $tags="novo")
+}
+
+Boundary(celula_br, "Célula BR - região Brasil (dados pessoais de titulares BR) [ADR-002]", $tags="residencia") {
+  Container(gw_br, "API Gateway regional", "Gerenciado", "TLS, validação de token, verificação da claim country, quotas por cliente, rotas /orders, /v1 e /v2. [ADR-007]", $tags="novo")
+  Container(pedidos_br, "Serviço de Pedidos", "Java 21, Spring Boot 4", "Adaptadores v1 e v2 sobre o mesmo domínio; idempotência, snapshot, outbox e read model de catálogo. [ADR-003 a ADR-007]", $tags="alterado")
+  ContainerDb(pedidos_db_br, "Banco de Pedidos", "PostgreSQL multi-AZ", "orders, order_items com snapshot, idempotency_record, outbox_event, catalog_item_view, processed_event.", $tags="alterado")
+  ContainerQueue(broker_br, "Broker regional", "Kafka gerenciado", "OrderCreated e OrderStatusChanged; réplica de CatalogItemChanged do país BR.", $tags="alterado")
+  Container(integracao_br, "Integração com Parceiros", "Java 21, Spring Boot 4", "Assinaturas e entrega de webhooks com retry, bulkhead e circuit breaker por parceiro; DLQ. [ADR-008]", $tags="novo")
+  ContainerDb(integracao_db_br, "Banco de Integração", "PostgreSQL", "Parceiros, assinaturas, entregas e DLQ. Sem dados pessoais de compradores.", $tags="novo")
+  Container(assistente_br, "Assistente Operacional", "Java 21, Spring Boot 4", "Consultas somente leitura, pseudonimização e guardrails.", $tags="novo")
+}
+
+Boundary(celula_b, "Célula B - região País B (dados pessoais de titulares B) [ADR-002]", $tags="residencia") {
+  Container(stack_b, "Contêineres da célula B", "Mesmos artefatos da célula BR", "Gateway, Pedidos, Integração, Assistente, bancos e broker regional. Sem API v1.", $tags="novo")
+}
+
+' Entrada
+Rel(cliente, gw_br, "Cria e consulta pedidos (titulares BR)", "HTTPS api-br, v2")
+Rel(cliente, stack_b, "Cria e consulta pedidos (titulares B)", "HTTPS api-b, v2")
+Rel(parceiros, gw_br, "Cria, consulta e reconcilia (updatedSince)", "HTTPS, OAuth2, v2")
+Rel(parceiros, stack_b, "Cria, consulta e reconcilia", "HTTPS, OAuth2, v2")
+Rel(backoffice, gw_br, "Consulta pedidos BR", "v1 até o sunset, depois v2")
+Rel(backoffice, stack_b, "Consulta pedidos B", "v2")
+Rel(erp, gw_br, "Consulta pedidos", "v1 até o sunset, depois v2")
+Rel(erp, broker_br, "Consome eventos de pedido", "Kafka")
+Rel(gw_br, idp, "Obtém chaves públicas", "JWKS, em cache")
+Rel(gw_br, pedidos_br, "Encaminha requisições autenticadas", "REST, rede privada")
+
+' Núcleo de Pedidos
+Rel(pedidos_br, pedidos_db_br, "Transação única: pedido + snapshot + idempotência + outbox", "JDBC")
+Rel(pedidos_br, broker_br, "Publica eventos do outbox; consome CatalogItemChanged", "Kafka")
+Rel(pedidos_br, catalogo, "Contingência: busca em lote de SKU ausente", "REST, timeout 200 ms, circuit breaker", $tags="contingencia")
+
+' Catálogo
+Rel(catalogo, catalogo_db, "Lê e grava; outbox", "JDBC")
+Rel(catalogo, broker_cat, "Publica CatalogItemChanged", "Kafka")
+Rel(broker_cat, broker_br, "Replica eventos do país BR", "Replicação gerenciada")
+Rel(broker_cat, stack_b, "Replica eventos do país B (sem PII)", "Replicação entre regiões")
+
+' Notificação a parceiros
+Rel(integracao_br, broker_br, "Consome OrderStatusChanged", "Kafka")
+Rel(integracao_br, integracao_db_br, "Lê e grava", "JDBC")
+Rel(integracao_br, parceiros, "Notifica status", "Webhooks HMAC")
+Rel(stack_b, parceiros, "Notifica status", "Webhooks HMAC")
+
+' Assistente
+Rel(operador, assistente_br, "Pergunta sobre pedidos", "HTTPS, SSO")
+Rel(assistente_br, pedidos_br, "Consulta pedidos", "API interna somente leitura")
+Rel(assistente_br, llm, "Envia contexto pseudonimizado", "HTTPS")
+Rel(assistente_br, integracao_br, "Consulta entregas de webhook", "API interna somente leitura")
+Rel(assistente_br, idp, "Troca de token em nome do operador", "OAuth2 token exchange")
+
+SHOW_LEGEND()
+@enduml

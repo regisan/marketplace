@@ -1,0 +1,188 @@
+openapi: 3.1.0
+info:
+  title: Pedidos - API v1
+  version: 1.1.0
+  description: |
+    API legada de Pedidos, mantida por compatibilidade por pelo menos 6 meses após o lançamento
+    da v2 (ADR-007, P-CTR-04). Disponível apenas na célula BR, nas rotas `/orders` e `/v1/orders`
+    (alias configurado no API Gateway).
+
+    ## Histórico
+    - **1.1.0**: header opcional `Idempotency-Key` em `POST /orders` (ADR-005), com as respostas
+      `409` e `422` que só ocorrem quando o header é enviado, e o header de resposta
+      `Idempotent-Replayed`. Preço e descrição dos itens passam a vir do snapshot (ADR-004),
+      sem mudança de formato. Todas as mudanças são aditivas: um consumidor escrito para a
+      1.0.0 continua funcionando sem alteração.
+    - **1.0.0**: contrato AS-IS reconstruído (`baseline/orders-v1.0.0.yaml`).
+
+    ## Ciclo de vida
+    Quando a v1 entrar em descontinuação (dia 90 do plano), as respostas passam a incluir os
+    headers `Deprecation` e `Sunset`. O desligamento exige 6 meses desde o lançamento da v2 e
+    30 dias consecutivos sem tráfego.
+servers:
+  - url: https://api-br.exemplo.com
+    description: Célula BR
+security:
+  - bearerAuth: []
+paths:
+  /orders:
+    post:
+      operationId: createOrderV1
+      summary: Cria um pedido
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrderRequest"
+      responses:
+        "201":
+          description: |
+            Pedido criado. Se `Idempotency-Key` foi enviada e já havia sido usada com o mesmo
+            corpo, a resposta original é devolvida com `Idempotent-Replayed: true`.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "409":
+          description: |
+            Somente com `Idempotency-Key`: requisição com a mesma chave ainda em processamento.
+            Repetir após o tempo indicado em `Retry-After`.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: Somente com `Idempotency-Key`. A chave já foi usada com um corpo diferente.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /orders/{id}:
+    get:
+      operationId: getOrderV1
+      summary: Consulta um pedido pelo ID sequencial
+      description: Pedidos criados pela v2 também podem ser consultados aqui pelo `legacyId`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Pedido encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Opcional na v1. Quando enviada, garante no máximo um pedido por chave e por chamador
+        durante 24 horas (ADR-005). Sem o header, o comportamento da 1.0.0 é mantido.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+  headers:
+    IdempotentReplayed:
+      description: Presente e igual a `true` quando a resposta é a repetição de uma criação anterior.
+      schema:
+        type: boolean
+  responses:
+    Error:
+      description: Erro
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    CreateOrderRequest:
+      type: object
+      required: [customerId, items]
+      properties:
+        customerId:
+          type: string
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [sku, quantity]
+            properties:
+              sku:
+                type: string
+              quantity:
+                type: integer
+                minimum: 1
+    Order:
+      type: object
+      required: [id, customerId, status, total, items, createdAt]
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Identificador sequencial legado (`legacyId` na v2).
+        customerId:
+          type: string
+        status:
+          type: string
+          enum: [CREATED, CONFIRMED, SHIPPED, DELIVERED, CANCELLED]
+        total:
+          type: number
+          description: Soma dos itens, na moeda do país (sempre BRL na v1).
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderItem"
+        createdAt:
+          type: string
+          format: date-time
+    OrderItem:
+      type: object
+      required: [sku, quantity, price]
+      properties:
+        sku:
+          type: string
+        quantity:
+          type: integer
+        price:
+          type: number
+          description: Preço unitário praticado, lido do snapshot do item (ADR-004).
+        description:
+          type: string
+          description: Descrição no momento da venda, lida do snapshot do item (ADR-004).
+    Error:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string

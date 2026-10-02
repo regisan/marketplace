@@ -1,0 +1,35 @@
+# Regras adicionais da API v2 (ADR-005, ADR-007).
+# Uso: npx @stoplight/spectral-cli lint openapi/orders-v2.yaml -r .spectral-v2.yaml --fail-severity error
+extends:
+  - ./.spectral.yaml
+
+rules:
+  v2-post-exige-idempotency-key:
+    description: Toda operação POST da v2 deve declarar o header Idempotency-Key obrigatório (ADR-005).
+    severity: error
+    given: "$.paths[*].post"
+    then:
+      field: parameters
+      function: schema
+      functionOptions:
+        schema:
+          type: array
+          contains:
+            type: object
+            required: [name, in, required]
+            properties:
+              name: { const: Idempotency-Key }
+              in: { const: header }
+              required: { const: true }
+
+  v2-erros-em-problem-details:
+    description: Respostas de erro da v2 devem usar application/problem+json (RFC 9457, ADR-007).
+    severity: error
+    given: "$.paths[*][*].responses['400','401','403','404','409','422','429','500','503']"
+    then:
+      field: content
+      function: schema
+      functionOptions:
+        schema:
+          type: object
+          required: ["application/problem+json"]

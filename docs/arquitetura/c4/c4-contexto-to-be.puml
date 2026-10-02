@@ -1,0 +1,32 @@
+@startuml c4-contexto-to-be
+!include <C4/C4_Context>
+!include estilos.iuml
+
+title Contexto - TO-BE (web, app, parceiros e dois países)
+
+Person(cliente, "Cliente", "Compra pela web ou pelo app, no Brasil ou no País B.")
+Person(operador, "Operador de atendimento", "Consulta pedidos, inclusive pelo Assistente Operacional.")
+
+System(plataforma, "Plataforma de Pedidos e Catálogo", "Células por país (BR e B), API pública v2, notificações a parceiros e Assistente Operacional.", $tags="alterado")
+
+System_Ext(parceiros, "Parceiros de marketplace", "Criam e acompanham pedidos por API.", $tags="novo")
+System_Ext(idp, "Identidade (IdP)", "OIDC para clientes; OAuth2 client credentials para parceiros.")
+System_Ext(backoffice, "Backoffice", "Atendimento e operação.")
+System_Ext(erp, "ERP", "Faturamento e gestão.")
+System_Ext(llm, "Provedor de LLM", "Inferência na região de cada célula, sem retenção de dados.", $tags="novo")
+System_Ext(suporte, "Pagamento, Estoque, Frete e Fiscal", "Sistemas de suporte existentes.", $tags="fora_escopo")
+
+Rel(cliente, idp, "Autentica-se", "OIDC")
+Rel(cliente, plataforma, "Cria e consulta pedidos (web e app)", "HTTPS, API v2")
+Rel(parceiros, idp, "Obtém token", "OAuth2 client credentials")
+Rel(parceiros, plataforma, "Cria pedidos e reconcilia status", "HTTPS, API v2")
+Rel(plataforma, parceiros, "Notifica mudança de status", "Webhooks assinados (HMAC)")
+Rel(operador, backoffice, "Usa")
+Rel(operador, plataforma, "Pergunta sobre pedidos", "Assistente Operacional")
+Rel(backoffice, plataforma, "Consulta pedidos", "API v1 até o sunset, depois v2")
+Rel(erp, plataforma, "Consulta pedidos e consome eventos", "API v1 até o sunset, depois v2; Kafka")
+Rel(plataforma, llm, "Envia consultas pseudonimizadas", "HTTPS")
+Rel(plataforma, suporte, "Integração existente (Q-10)", $tags="fora_escopo")
+
+SHOW_LEGEND()
+@enduml

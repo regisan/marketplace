@@ -1,0 +1,106 @@
+@startuml seq-criacao-de-pedido
+!include estilos.iuml
+
+title Criação de pedido - API v2, célula BR\n[ADR-003, ADR-004, ADR-005, ADR-006, ADR-007]
+
+actor "Cliente ou\nParceiro" as cli
+participant "API Gateway\nregional" as gw
+participant "Serviço de\nPedidos" as ped
+database "Banco de\nPedidos" as db
+participant "Serviço de\nCatálogo" as cat
+participant "Publicador do outbox\n(Pedidos)" as pub
+queue "Broker\nregional" as broker
+
+== Entrada e autenticação (FC1, FC2) ==
+
+cli -> gw: POST /v2/orders\nAuthorization: Bearer (token)\nIdempotency-Key: k1\n{ items, expectedTotal?, externalReference? }
+gw -> gw: valida token (chaves JWKS em cache),\nclaim country = BR, quota do chamador
+
+alt token inválido, célula errada ou quota excedida
+  gw --> cli: 401 / 403 / 429 (Problem Details)
+else requisição autorizada
+  gw -> ped: POST /v2/orders (rede privada)
+  ped -> ped: revalida token; exige Idempotency-Key\n(ausente: 400); calcula requestHash
+
+  == Precificação pelo read model local [ADR-003] ==
+
+  ped -> db: SELECT catalog_item_view\nWHERE country = 'BR' AND sku IN (...)
+  db --> ped: itens com preço, moeda, descrição, catalogVersion
+
+  opt algum SKU ausente no read model (produto recém-criado)
+    ped -> cat: POST /internal/catalog-items:batch\n(timeout 200 ms, circuit breaker)
+    alt resposta dentro do timeout
+      cat --> ped: itens encontrados
+    else timeout, erro ou circuit breaker aberto
+      ped --> gw: 503 Problem Details (catalog-unavailable)\nRetry-After: 2
+      gw --> cli: 503
+      note right of ped
+        Degradação controlada: só pedidos com SKUs
+        fora do read model são afetados. Os demais
+        seguem sem depender do Catálogo.
+      end note
+    end
+  end
+
+  opt expectedTotal diverge do total calculado acima da tolerância [P-DOM-05]
+    ped --> gw: 409 Problem Details (price-changed)\ncom preços atuais
+    gw --> cli: 409
+  end
+
+  == Transação única [ADR-004, ADR-005, ADR-006] ==
+
+  ped -> db: BEGIN; SET LOCAL lock_timeout = '2s'
+  ped -> db: INSERT idempotency_record\n(caller_id, k1, requestHash, orderId, 201, corpo, expires_at = +24 h)
+
+  alt primeira chamada com a chave
+    ped -> db: INSERT orders (id UUIDv7, legacyId, status CREATED, version 1)
+    ped -> db: INSERT order_items com ItemSnapshot\n(unitPrice, currency, description, catalogVersion,\ncapturedAt, snapshotSource = CAPTURED)
+    ped -> db: INSERT outbox_event (OrderCreated, sem PII)
+    ped -> db: COMMIT
+    ped --> gw: 201 Created, Location: /v2/orders/{id}
+    gw --> cli: 201 Created
+
+  else unicidade violada em (caller_id, k1)
+    note right of db
+      Uma requisição simultânea com a mesma chave
+      fica bloqueada no índice único até a primeira
+      confirmar; então recebe a violação.
+    end note
+    ped -> db: ROLLBACK
+    ped -> db: SELECT idempotency_record (caller_id, k1)
+    alt mesmo requestHash
+      ped --> gw: resposta armazenada (201, mesmo corpo)\nIdempotent-Replayed: true
+      gw --> cli: 201 Created (repetição)
+    else requestHash diferente
+      ped --> gw: 422 Problem Details (idempotency-key-reuse)
+      gw --> cli: 422
+    end
+
+  else lock_timeout excedido (primeira transação ainda em curso)
+    ped -> db: ROLLBACK
+    ped --> gw: 409 Problem Details (request-in-progress)\nRetry-After: 1
+    gw --> cli: 409
+
+  else unicidade violada em (partner_id, externalReference)
+    ped -> db: ROLLBACK
+    ped --> gw: 409 Problem Details (duplicate-external-reference)\ncom id do pedido existente
+    gw --> cli: 409
+  end
+end
+
+== Publicação assíncrona, desacoplada da resposta [ADR-006] ==
+
+loop a cada 100 ms (recuo até 1 s quando não há eventos)
+  pub -> db: SELECT outbox_event WHERE published_at IS NULL\nORDER BY occurred_at LIMIT 500\nFOR UPDATE SKIP LOCKED
+  pub -> broker: publica OrderCreated\n(chave de partição = orderId)
+  broker --> pub: ack
+  pub -> db: UPDATE outbox_event SET published_at = now()
+end
+
+note over pub, broker
+  Entrega pelo menos uma vez: se o publicador cair entre
+  o ack e o UPDATE, o evento é republicado. Consumidores
+  deduplicam por eventId.
+end note
+
+@enduml
