@@ -42,6 +42,9 @@ Os contratos em `docs/` não foram alterados. Cada item traz a resolução adota
 | D-23 | O payload do `OrderCreated` é montado por um record com lista explícita de campos, sem nenhuma referência a `Customer` | Ausência de dados pessoais por construção (QA-PRI-02), e não por filtro |
 | D-24 | `partnerId` e `externalReference` saem como `null` no evento de cliente final | O schema do AsyncAPI declara `type: [string, "null"]` |
 | D-25 | O schema do AsyncAPI é validado como JSON Schema draft-07, com o documento registrado em memória no networknt 2.0.1 | O loader do networknt 2.x não abre URIs `file:`; o draft-07 é o formato padrão de schema do AsyncAPI 3.0 |
+| D-26 | `ConsumidorV1` lê as respostas em modo estrito (falha com campo desconhecido) | Além de validar contra o schema, detecta qualquer campo novo na resposta da v1, o que um consumidor estrito da 1.0.0 não toleraria |
+| D-27 | A v1 não impõe limites que a 1.0.0 não tinha (máximo de itens e de quantidade); só limita `customerId` e `sku` a 64 caracteres, o tamanho das colunas | Uma regra nova recusaria requisições que consumidores atuais já enviam |
+| D-28 | `GET /orders/{id}` com identificador não numérico responde `404` | A 1.0.0 declara apenas `200`, `401` e `404` |
 
 ## Problemas encontrados
 

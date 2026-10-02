@@ -47,7 +47,7 @@ class SnapshotIT {
     }
 
     @Test
-    @DisplayName("QA-AUD-01: após mudar preço e descrição no read model, o pedido existente mantém os valores na v2")
+    @DisplayName("QA-AUD-01: após mudar preço e descrição no read model, o pedido existente mantém os valores na v1 e na v2")
     void snapshotSurvivesCatalogChange() {
         JsonNode created = JSON.readTree(api.post("/v2/orders", TOKEN_ANA, newKey(),
                 Requests.v2WithSku(newCustomerId(), SKU)).body());
@@ -64,6 +64,11 @@ class SnapshotIT {
         assertThat(snapshot.path("description").asString()).isEqualTo("Produto sintético 0777");
         assertThat(snapshot.path("catalogVersion").asLong()).isEqualTo(1);
         assertThat(snapshot.path("snapshotSource").asString()).isEqualTo("CAPTURED");
+
+        JsonNode v1Item = JSON.readTree(api.get("/orders/" + created.path("legacyId").asLong(), TOKEN_ANA).body())
+                .path("items").get(0);
+        assertThat(v1Item.path("price").decimalValue()).isEqualByComparingTo("77.50");
+        assertThat(v1Item.path("description").asString()).isEqualTo("Produto sintético 0777");
 
         JsonNode newOrder = JSON.readTree(api.post("/v2/orders", TOKEN_ANA, newKey(),
                 Requests.v2WithSku(newCustomerId(), SKU)).body());
