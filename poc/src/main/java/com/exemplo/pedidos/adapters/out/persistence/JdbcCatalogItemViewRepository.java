@@ -37,6 +37,7 @@ class JdbcCatalogItemViewRepository implements CatalogItemViewRepository {
                         rs.getString("description"),
                         rs.getBoolean("sellable"),
                         rs.getLong("catalog_version")))
+                .list()
                 .stream()
                 .collect(Collectors.toMap(CatalogItemView::sku, Function.identity()));
     }

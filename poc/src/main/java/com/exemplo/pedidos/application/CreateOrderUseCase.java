@@ -9,38 +9,66 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Map;
+import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/** Criação de pedido: precificação pelo read model, snapshot e gravação em uma transação curta. */
+/**
+ * Criação de pedido (ADR-005). Precificação, snapshot e serialização da resposta acontecem antes da
+ * transação; dentro dela só há escritas: registro de idempotência, pedido com itens e evento.
+ */
 @Service
 public class CreateOrderUseCase {
 
     private final OrderRepository orders;
     private final CatalogItemViewRepository catalog;
+    private final IdempotencyService idempotency;
     private final TransactionTemplate tx;
     private final Clock clock;
     private final BigDecimal priceTolerance;
 
-    public CreateOrderUseCase(OrderRepository orders, CatalogItemViewRepository catalog, TransactionTemplate tx,
-            Clock clock, @Value("${pedidos.preco.tolerancia:0.00}") BigDecimal priceTolerance) {
+    public CreateOrderUseCase(OrderRepository orders, CatalogItemViewRepository catalog,
+            IdempotencyService idempotency, TransactionTemplate tx, Clock clock,
+            @Value("${pedidos.preco.tolerancia:0.00}") BigDecimal priceTolerance) {
         this.orders = orders;
         this.catalog = catalog;
+        this.idempotency = idempotency;
         this.tx = tx;
         this.clock = clock;
         this.priceTolerance = priceTolerance;
     }
 
-    public CreateOrderResult create(CreateOrderCommand command, ResponseRenderer renderer) {
+    /**
+     * @param idempotencyRequest ausente apenas na v1 sem header, que mantém o comportamento da 1.0.0
+     */
+    public CreateOrderResult create(CreateOrderCommand command, Optional<IdempotencyRequest> idempotencyRequest,
+            ResponseRenderer renderer) {
+        Caller caller = command.caller();
+        if (idempotencyRequest.isPresent()) {
+            // Caminho rápido: repetição de uma criação já confirmada responde igual, mesmo que o catálogo tenha mudado.
+            Optional<CreateOrderResult> recorded = idempotency.replayIfRecorded(caller, idempotencyRequest.get());
+            if (recorded.isPresent()) {
+                return recorded.get();
+            }
+        }
+
         Order order = price(command);
-        String body = renderer.render(order);
+        CreateOrderResult created = new CreateOrderResult(order.id(), 201, renderer.render(order), false);
         try {
-            tx.executeWithoutResult(status -> orders.insert(order));
+            tx.executeWithoutResult(status -> {
+                idempotencyRequest.ifPresent(request ->
+                        idempotency.reserve(caller, request, created, order.createdAt()));
+                orders.insert(order);
+            });
+        } catch (IdempotencyKeyTakenException e) {
+            return idempotency.resolveConflict(caller, idempotencyRequest.orElseThrow());
         } catch (ExternalReferenceTakenException e) {
             throw duplicateExternalReference(command);
+        } catch (LockTimeoutException e) {
+            throw new RequestInProgressException();
         }
-        return new CreateOrderResult(order.id(), 201, body, false);
+        return created;
     }
 
     /** Precifica e monta o pedido fora da transação: nenhuma leitura de rede dentro dela. */
@@ -67,6 +95,6 @@ public class CreateOrderUseCase {
     private DuplicateExternalReferenceException duplicateExternalReference(CreateOrderCommand command) {
         return orders.findIdByExternalReference(command.caller().partnerId(), command.externalReference())
                 .map(DuplicateExternalReferenceException::new)
-                .orElseThrow(() -> new IllegalStateException("Violação de externalReference sem pedido existente"));
+                .orElseThrow(RequestInProgressException::new);
     }
 }

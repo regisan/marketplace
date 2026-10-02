@@ -33,7 +33,14 @@ Os contratos em `docs/` não foram alterados. Cada item traz a resolução adota
 | D-14 | Validação de entrada manual (`RequestValidator`), sem Bean Validation | Hibernate Validator não está na lista de dependências da seção 3 |
 | D-15 | Parceiro sem `externalReference` recebe `400`; para cliente final o campo é ignorado | O texto do contrato diz "obrigatório para parceiros; ignorado para clientes finais", mas o schema não marca o campo como obrigatório |
 | D-16 | `customerId` do corpo não é comparado com a identidade do token; a posse do pedido é sempre o chamador do token | Não há IdP real na PoC; limite registrado |
+| D-17 | Antes de precificar, a criação lê o registro de idempotência válido; se existir, responde direto (repetição ou `422`). O `INSERT` dentro da transação continua sendo a garantia sob concorrência | Sem isso, uma repetição após mudança de preço ou de SKU vendável receberia `409 price-changed` ou `422 unknown-sku` em vez da resposta original, contrariando o ADR-005 |
+| D-18 | `lock_timeout` configurável (`pedidos.idempotencia.lock-timeout`, padrão `2s`); `IdempotenciaIT` usa `5s` | Dá folga ao portão do QA-INT-02 em máquinas lentas; o mecanismo é o mesmo |
+| D-19 | "Respostas idênticas" é verificado como igualdade semântica do JSON | `response_body` é `jsonb` (seção 5), que não preserva ordem de chaves nem espaços. Para igualdade byte a byte, a coluna teria de ser `text` |
+| D-20 | `RequestHasher` fica em `adapters.in.web`, compartilhado por v1 e v2, e não em `application` | A canonização depende do DTO de entrada e do Jackson, que são detalhes do adaptador |
+| D-21 | Um único contêiner PostgreSQL para todos os contextos Spring de teste | `IdempotenciaIT` tem propriedades próprias e gera outro contexto |
+| D-22 | Lock timeout no `INSERT` do pedido (corrida pela mesma `externalReference` entre chaves diferentes) também responde `409 request-in-progress` | Item A-8 do plano: a requisição concorrente ainda não sabe se a outra vai confirmar |
 
 ## Problemas encontrados
 
 - O `poc/CLAUDE.md` versionado no primeiro commit era cópia do `CLAUDE.md` da raiz, sem a especificação. Foi substituído pelo autor antes do início da implementação.
+- Na primeira execução do `IdempotenciaIT`, o pool Hikari se esgotou: `JdbcClient...query().stream()` mantém a conexão aberta até o stream ser fechado. Trocado por `.list()`. O teste de concorrência expôs o vazamento, que passava despercebido nas requisições sequenciais.

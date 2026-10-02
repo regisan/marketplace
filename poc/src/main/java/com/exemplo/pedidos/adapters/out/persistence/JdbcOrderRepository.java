@@ -1,6 +1,7 @@
 package com.exemplo.pedidos.adapters.out.persistence;
 
 import com.exemplo.pedidos.application.ExternalReferenceTakenException;
+import com.exemplo.pedidos.application.LockTimeoutException;
 import com.exemplo.pedidos.application.OrderRepository;
 import com.exemplo.pedidos.domain.Channel;
 import com.exemplo.pedidos.domain.Customer;
@@ -18,7 +19,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import org.springframework.dao.DuplicateKeyException;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -70,9 +71,13 @@ class JdbcOrderRepository implements OrderRepository {
                     .param("createdAt", utc(order.createdAt()))
                     .param("updatedAt", utc(order.updatedAt()))
                     .update();
-        } catch (DuplicateKeyException e) {
+        } catch (DataAccessException e) {
             if (PostgresErrors.violates(e, EXTERNAL_REFERENCE_CONSTRAINT)) {
                 throw new ExternalReferenceTakenException(e);
+            }
+            // Corrida com outra criação da mesma externalReference ainda não confirmada.
+            if (PostgresErrors.hasState(e, PostgresErrors.LOCK_NOT_AVAILABLE)) {
+                throw new LockTimeoutException(e);
             }
             throw e;
         }

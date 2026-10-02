@@ -1,13 +1,16 @@
 package com.exemplo.pedidos.adapters.in.web.v2;
 
+import com.exemplo.pedidos.adapters.in.web.RequestHasher;
 import com.exemplo.pedidos.adapters.in.web.RequestValidator;
 import com.exemplo.pedidos.application.Caller;
 import com.exemplo.pedidos.application.CreateOrderCommand;
 import com.exemplo.pedidos.application.CreateOrderResult;
 import com.exemplo.pedidos.application.CreateOrderUseCase;
 import com.exemplo.pedidos.application.GetOrderUseCase;
+import com.exemplo.pedidos.application.IdempotencyRequest;
 import com.exemplo.pedidos.application.OrderNotFoundException;
 import java.net.URI;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -28,14 +31,18 @@ class OrderControllerV2 {
 
     static final String IDEMPOTENCY_KEY = "Idempotency-Key";
     static final String IDEMPOTENT_REPLAYED = "Idempotent-Replayed";
+    static final String OPERATION_ID = "createOrder";
 
     private final CreateOrderUseCase createOrder;
     private final GetOrderUseCase getOrder;
+    private final RequestHasher hasher;
     private final JsonMapper json;
 
-    OrderControllerV2(CreateOrderUseCase createOrder, GetOrderUseCase getOrder, JsonMapper json) {
+    OrderControllerV2(CreateOrderUseCase createOrder, GetOrderUseCase getOrder, RequestHasher hasher,
+            JsonMapper json) {
         this.createOrder = createOrder;
         this.getOrder = getOrder;
+        this.hasher = hasher;
         this.json = json;
     }
 
@@ -48,7 +55,10 @@ class OrderControllerV2 {
                 .throwIfInvalid();
         CreateOrderCommand command = OrderMapperV2.toCommand(caller, request);
 
-        CreateOrderResult result = createOrder.create(command,
+        IdempotencyRequest idempotency = new IdempotencyRequest(idempotencyKey,
+                hasher.hash("POST", OPERATION_ID, request));
+
+        CreateOrderResult result = createOrder.create(command, Optional.of(idempotency),
                 order -> json.writeValueAsString(OrderResponseV2.from(order)));
 
         ResponseEntity.BodyBuilder response = ResponseEntity.status(result.status())

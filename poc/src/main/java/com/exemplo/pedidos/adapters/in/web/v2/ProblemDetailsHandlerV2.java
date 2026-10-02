@@ -2,12 +2,15 @@ package com.exemplo.pedidos.adapters.in.web.v2;
 
 import com.exemplo.pedidos.adapters.in.web.InvalidRequestException;
 import com.exemplo.pedidos.application.DuplicateExternalReferenceException;
+import com.exemplo.pedidos.application.IdempotencyKeyReuseException;
 import com.exemplo.pedidos.application.OrderNotFoundException;
+import com.exemplo.pedidos.application.RequestInProgressException;
 import com.exemplo.pedidos.domain.PriceChangedException;
 import com.exemplo.pedidos.domain.UnknownSkuException;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -62,6 +65,22 @@ class ProblemDetailsHandlerV2 {
                         "Já existe um pedido com esta referência externa", 409)
                 .withRetryable(false)
                 .withExistingOrderId(e.existingOrderId()));
+    }
+
+    @ExceptionHandler(RequestInProgressException.class)
+    ResponseEntity<Problem> requestInProgress(RequestInProgressException e) {
+        Problem problem = Problem.of(Problem.BASE + "request-in-progress",
+                "Requisição com a mesma chave em processamento", 409).withRetryable(true);
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(RequestInProgressException.RETRY_AFTER_SECONDS))
+                .contentType(MediaType.APPLICATION_PROBLEM_JSON)
+                .body(problem);
+    }
+
+    @ExceptionHandler(IdempotencyKeyReuseException.class)
+    ResponseEntity<Problem> keyReuse(IdempotencyKeyReuseException e) {
+        return respond(Problem.of(Problem.BASE + "idempotency-key-reuse",
+                "Idempotency-Key já usada com outro conteúdo", 422).withRetryable(false));
     }
 
     @ExceptionHandler(OrderNotFoundException.class)
