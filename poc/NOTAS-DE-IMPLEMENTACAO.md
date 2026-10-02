@@ -22,6 +22,8 @@ Os contratos em `docs/` não foram alterados. Cada item traz a resolução adota
 | D-3 | Validação de contrato com `com.atlassian.oai:openapi-request-validator-core` 3.0.0 | Valida a resposta inteira contra a operação: status declarado, `Content-Type`, headers e corpo. Usa o dialeto OpenAPI 3.1 do networknt. `ContractValidationSpikeTest` prova `type: [string, "null"]`, `pattern`, `format: uuid`, status e media type. O plano B (swagger-parser + networknt) não foi necessário |
 | D-4 | AsyncAPI validado com `networknt json-schema-validator` 2.0.1, a mesma versão usada pelo validador OpenAPI | Não há validador AsyncAPI confiável em Java |
 | D-5 | Maven Wrapper 3.3.4 (`only-script`) com Maven 3.9.16 | Maven 4 ainda está em RC |
+| D-7 | Trigger que rejeita `UPDATE` em `order_items` | Validação do ADR-004 (snapshot imutável, invariante 2 do agregado); não consta da especificação, adição de baixo custo |
+| D-8 | Dados sintéticos em `db/testdata`, aplicados só nos perfis `test` e `local` via `spring.flyway.locations` | Mantém o perfil padrão sem dados fictícios |
 | D-6 | Pool Hikari de 30 conexões no perfil de teste | Com o padrão de 10, parte das 20 requisições do QA-INT-02 ficaria enfileirada no pool e não chegaria ao banco ao mesmo tempo |
 
 ## Problemas encontrados

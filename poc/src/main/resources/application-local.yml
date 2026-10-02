@@ -1,0 +1,7 @@
+spring:
+  flyway:
+    locations: classpath:db/migration,classpath:db/testdata
+  datasource:
+    url: jdbc:postgresql://localhost:5432/pedidos
+    username: pedidos
+    password: pedidos
