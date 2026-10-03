@@ -6,6 +6,7 @@ import com.exemplo.pedidos.application.CreateOrderCommand;
 import com.exemplo.pedidos.domain.Customer;
 import com.exemplo.pedidos.domain.Money;
 import com.exemplo.pedidos.domain.OrderLine;
+import java.util.Currency;
 import java.util.List;
 import java.util.regex.Pattern;
 
@@ -55,8 +56,7 @@ final class OrderMapperV2 {
         if (expected != null) {
             v.require(expected.amount() != null && AMOUNT.matcher(expected.amount()).matches(),
                             "expectedTotal.amount", "decimal em texto, até 4 casas")
-                    .require(expected.currency() != null && CURRENCY.matcher(expected.currency()).matches(),
-                            "expectedTotal.currency", "código ISO 4217");
+                    .require(isIsoCurrency(expected.currency()), "expectedTotal.currency", "código ISO 4217");
         }
 
         v.optionalText(request.externalReference(), "externalReference", 64);
@@ -72,5 +72,18 @@ final class OrderMapperV2 {
                 items.stream().map(item -> new OrderLine(item.sku(), item.quantity())).toList(),
                 expected == null ? null : Money.of(expected.amount(), expected.currency()),
                 request.externalReference());
+    }
+
+    /** O pattern do contrato aceita qualquer trio de letras; {@link Money} exige uma moeda ISO 4217 existente. */
+    static boolean isIsoCurrency(String code) {
+        if (code == null || !CURRENCY.matcher(code).matches()) {
+            return false;
+        }
+        try {
+            Currency.getInstance(code);
+            return true;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 }
