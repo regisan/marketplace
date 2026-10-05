@@ -64,6 +64,19 @@ class ContratoV2IT {
     }
 
     @Test
+    @DisplayName("ADR-007: 400 (e não 500) para moeda que segue o pattern mas não existe na ISO 4217")
+    void unknownCurrency() {
+        String body = Requests.v2(newCustomerId(), "140.00", null).replace("\"currency\":\"BRL\"", "\"currency\":\"ZZZ\"");
+
+        ApiClient.Response response = api.post("/v2/orders", TOKEN_ANA, newKey(), body);
+
+        assertThat(response.status()).isEqualTo(400);
+        assertValid("POST", "/orders", response);
+        assertThat(JSON.readTree(response.body()).path("errors").get(0).path("field").asString())
+                .isEqualTo("expectedTotal.currency");
+    }
+
+    @Test
     @DisplayName("ADR-007: 400 com JSON malformado")
     void malformedJson() {
         ApiClient.Response response = api.post("/v2/orders", TOKEN_ANA, newKey(), "{");
