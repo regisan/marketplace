@@ -12,6 +12,8 @@ import com.exemplo.pedidos.support.Requests;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -74,6 +76,32 @@ class ContratoV2IT {
         assertValid("POST", "/orders", response);
         assertThat(JSON.readTree(response.body()).path("errors").get(0).path("field").asString())
                 .isEqualTo("expectedTotal.currency");
+    }
+
+    @ParameterizedTest(name = "quantity = {0}")
+    @ValueSource(strings = {"1.5", "\"2\"", "true", "{}", "2147483648"})
+    @DisplayName("ADR-007: 400 (sem truncar nem converter texto) para quantity que não é inteiro")
+    void nonIntegerQuantity(String quantity) {
+        String body = Requests.v2(newCustomerId()).replace("\"quantity\":2", "\"quantity\":" + quantity);
+
+        ApiClient.Response response = api.post("/v2/orders", TOKEN_ANA, newKey(), body);
+
+        assertThat(response.status()).isEqualTo(400);
+        assertValid("POST", "/orders", response);
+        assertThat(JSON.readTree(response.body()).path("errors").get(0).path("field").asString())
+                .isEqualTo("items[0].quantity");
+    }
+
+    @Test
+    @DisplayName("ADR-007: quantity 2.0 é inteiro no JSON Schema e é aceito como 2")
+    void integralDecimalQuantity() {
+        String body = Requests.v2(newCustomerId()).replace("\"quantity\":2", "\"quantity\":2.0");
+
+        ApiClient.Response response = api.post("/v2/orders", TOKEN_ANA, newKey(), body);
+
+        assertThat(response.status()).isEqualTo(201);
+        assertValid("POST", "/orders", response);
+        assertThat(JSON.readTree(response.body()).path("items").get(0).path("quantity").asInt()).isEqualTo(2);
     }
 
     @Test
