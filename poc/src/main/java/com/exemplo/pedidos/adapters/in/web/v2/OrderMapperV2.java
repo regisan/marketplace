@@ -49,7 +49,7 @@ final class OrderMapperV2 {
             }
             v.requireText(item.sku(), field + ".sku", 64)
                     .require(item.quantity() != null && item.quantity() >= 1 && item.quantity() <= MAX_QUANTITY,
-                            field + ".quantity", "entre 1 e " + MAX_QUANTITY);
+                            field + ".quantity", "inteiro entre 1 e " + MAX_QUANTITY);
         }
 
         MoneyV2 expected = request.expectedTotal();
