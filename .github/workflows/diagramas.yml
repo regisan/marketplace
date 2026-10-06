@@ -1,17 +1,20 @@
 name: diagramas
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - "docs/arquitetura/**/*.puml"
       - "docs/arquitetura/**/*.iuml"
       - "scripts/render-diagramas.sh"
+      - ".github/workflows/diagramas.yml"
   push:
     branches: [main]
     paths:
       - "docs/arquitetura/**/*.puml"
       - "docs/arquitetura/**/*.iuml"
       - "scripts/render-diagramas.sh"
+      - ".github/workflows/diagramas.yml"
 
 jobs:
   diagramas:
@@ -40,9 +43,9 @@ jobs:
         if: github.event_name == 'pull_request'
         run: ./scripts/render-diagramas.sh --check
 
-      # Main: renderiza os SVGs e faz commit, para que o GitHub mostre as imagens no README.
+      # Push na main ou disparo manual: renderiza os SVGs e faz commit, para que o GitHub mostre as imagens no README.
       - name: Renderizar e publicar SVGs
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         run: |
           ./scripts/render-diagramas.sh
           if [[ -n "$(git status --porcelain docs/arquitetura)" ]]; then
